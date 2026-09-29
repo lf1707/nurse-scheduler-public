@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}我的排班 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="mySchedules('schedules')" x-init="load()">
+  <h2>我的排班</h2>
+  <p x-show="nurseName" style="margin-top:-0.75rem;">
+    <span class="tag">关联护士：<strong x-text="nurseName"></strong></span>
+  </p>
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="loading">加载中…</p>
+
+  <table x-show="!loading">
+    <thead>
+      <tr><th>排班记录</th><th>排班周期</th><th>周期天数</th><th>我的班次</th><th>查看</th></tr>
+    </thead>
+    <tbody>
+      <template x-for="row in scheduleBatches" :key="row.request_id">
+        <tr>
+          <td style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85em;" x-text="row.display_id"></td>
+          <td x-text="row.period_start + ' 至 ' + row.period_end"></td>
+          <td x-text="row.period_days"></td>
+          <td x-text="row.assignment_count + ' 次'"></td>
+          <td>
+            <a :href="'/pages/schedules/'+row.request_id" class="secondary outline" style="padding:0.1rem 0.5rem;">查看详情</a>
+          </td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <p x-show="!loading && scheduleBatches.length===0">暂无你的排班安排。</p>
+</div>
+
+<script src="/static/js/my_schedules.js"></script>
+{% endblock %}

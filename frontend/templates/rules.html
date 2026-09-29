@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}规则 · {{ app_name }}{% endblock %}
+{% block content %}
+<h2>规则</h2>
+
+<div x-data="rulesTenantSelector()" x-init="load()" style="display:flex; flex-direction:column; align-items:flex-start; gap:.5rem; margin-bottom:1rem;">
+  <label x-show="isSuper">租户
+      <select x-model="tenantId" @change="reload()">
+        <option value="">全部租户（跨租户浏览）</option>
+      <template x-for="tenant in tenants" :key="tenant.id">
+        <option :value="tenant.id" :selected="tenant.id === tenantId" x-text="tenant.name"></option>
+      </template>
+    </select>
+  </label>
+</div>
+
+<h3>技能组合规则</h3>
+<div x-data="sm()" x-init="load()" data-testid="skill-mix-section">
+  <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+    <button x-show="canManage" class="secondary" :disabled="!canCreateTarget" @click="openForm()" x-text="show ? '取消' : '新增规则'"></button>
+    <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建规则前请选择租户</small>
+  </div>
+  <dialog :open="show" x-show="show" style="display:none;" data-testid="skill-mix-modal">
+    <article>
+      <h3 x-text="form.id ? '编辑技能组合规则' : '新增技能组合规则'"></h3>
+      <form @submit.prevent="submit()">
+        <label>名称 <input x-model="form.name" required></label>
+        <label>班次
+          <select x-model="form.shift_template_id" required @change="loadRoles()">
+            <option value="" disabled>选择…</option>
+            <template x-for="s in availableShifts" :key="s.id"><option :value="s.id" x-text="s.code+' '+s.name"></option></template>
+          </select>
+        </label>
+        <fieldset>
+          <legend>角色需求（角色 × 人数，可选技能）</legend>
+          <template x-for="(req,i) in form.requirements" :key="req.key">
+            <div class="grid" style="grid-template-columns: 1.5fr 1.5fr 1fr auto; align-items:end;">
+              <select
+                x-model="form.requirements[i].role_id"
+                data-testid="skill-mix-requirement-role"
+              >
+                <option value="">任意角色</option>
+                <template x-for="r in availableRoles" :key="r.id"><option :value="r.id" x-text="r.code+' '+r.name"></option></template>
+              </select>
+              <select
+                x-model="form.requirements[i].skill_id"
+                data-testid="skill-mix-requirement-skill"
+              >
+                <option value="">技能不限</option>
+                <template x-for="sk in availableSkills" :key="sk.id"><option :value="sk.id" x-text="sk.code+' '+sk.name"></option></template>
+              </select>
+              <input type="number" min="0" x-model.number="form.requirements[i].count" placeholder="人数">
+              <button type="button" class="secondary outline" @click="form.requirements.splice(i,1)" style="padding:0.1rem 0.5rem;">×</button>
+            </div>
+          </template>
+          <button type="button" class="outline" @click="addRequirement()">+ 添加角色需求</button>
+        </fieldset>
+        <div>
+          <button type="submit" x-text="form.id ? '保存' : '创建'"></button>
+          <button type="button" class="secondary outline" @click="cancel()">取消</button>
+        </div>
+      </form>
+    </article>
+  </dialog>
+  <table x-show="!loading" style="margin-top:0.5rem;">
+    <thead><tr>
+      <th @click="sortBy('name')" style="cursor:pointer;">名称 <span x-text="sortArrow('name')"></span></th>
+      <template x-if="isSuper"><th>租户</th></template>
+      <th @click="sortBy('shift')" style="cursor:pointer;">班次 <span x-text="sortArrow('shift')"></span></th>
+      <th>需求</th><template x-if="canManage"><th>操作</th></template>
+    </tr></thead>
+    <tbody>
+      <template x-for="r in sortedItems()" :key="r.id">
+        <tr>
+          <td x-text="r.name"></td>
+          <template x-if="isSuper"><td x-text="r.tenant_name || '—'"></td></template>
+          <td x-text="(r.shift_template_code||'')+' '+(r.shift_template_name||'')"></td>
+          <td x-text="(r.requirements||[]).map(q=>((q.role_id ? ((q.role_code||'')+' '+(q.role_name||'')) : '任意角色')+(q.skill_code?(' ('+q.skill_code+' '+q.skill_name+')'):'')+'×'+q.count)).join(', ')"></td>
+          <template x-if="canManage"><td>
+            <button class="secondary outline" @click="edit(r)" style="padding:0.1rem 0.5rem;">编辑</button>
+            <button class="secondary outline" @click="del(r.id)" style="padding:0.1rem 0.5rem;">删除</button>
+          </td></template>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <div x-show="!loading && items.length > 0" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem;">
+    <small style="opacity:0.7;" x-text="'已显示 ' + items.length + ' / 共 ' + total + ' 条技能组合规则'"></small>
+    <button x-show="hasMore" class="outline" style="padding:0.2rem 0.7rem;"
+            @click="loadMore()" :disabled="loadingMore"
+            x-text="loadingMore ? '加载中…' : '加载更多'">
+    </button>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+<h3 style="margin-top:2rem;">班次序列规则</h3>
+<div x-data="seq()" x-init="load()" data-testid="sequence-section">
+  <p><small>⛔ <strong>班次序列规则定义的是被禁止的连续班次模式</strong>（如：第1天选夜班 + 第2天选早班 = 禁止这个组合出现）。按天排列步骤，每步选一个班次或"休"（休息）。可选限定适用角色，留空表示对所有角色生效。</small></p>
+  <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+    <button x-show="canManage" class="secondary" :disabled="!canCreateTarget" @click="openForm()" x-text="show ? '取消' : '新增规则'"></button>
+    <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建规则前请选择租户</small>
+  </div>
+  <dialog :open="show" x-show="show" style="display:none;" data-testid="sequence-modal">
+    <article>
+      <h3 x-text="form.id ? '编辑班次序列规则' : '新增班次序列规则'"></h3>
+      <form @submit.prevent="submit()">
+        <label>名称 <input x-model="form.name" required data-testid="sequence-name"></label>
+        <label>说明 <input x-model="form.description" placeholder="可选" data-testid="sequence-description"></label>
+        <fieldset>
+          <legend>班次序列（按天顺序）</legend>
+          <template x-for="(st,i) in form.steps" :key="st.key">
+            <div class="grid" style="grid-template-columns: auto 2fr auto; align-items:end; gap:0.4rem;">
+              <small x-text="'第'+(i+1)+'天'"></small>
+              <select
+                x-model="form.steps[i].shift_template_id"
+                data-testid="sequence-step-select"
+              >
+                <option value="">休</option>
+            <template x-for="s in availableShifts" :key="s.id"><option :value="s.id" x-text="s.code+' '+s.name"></option></template>
+              </select>
+              <button type="button" class="secondary outline" @click="form.steps.splice(i,1)" style="padding:0.1rem 0.5rem;">×</button>
+            </div>
+          </template>
+          <button type="button" class="outline" @click="addStep()">+ 添加步骤</button>
+        </fieldset>
+        <fieldset>
+          <legend>适用角色（留空 = 全部角色）</legend>
+            <template x-for="r in availableRoles" :key="r.id">
+            <label style="display:inline-block; margin-right:0.6rem;">
+              <input type="checkbox" :value="r.id" x-model="form.role_ids"> <span x-text="r.code+' '+r.name"></span>
+            </label>
+          </template>
+        </fieldset>
+        <div>
+          <button type="submit" x-text="form.id ? '保存' : '创建'"></button>
+          <button type="button" class="secondary outline" @click="cancel()">取消</button>
+        </div>
+      </form>
+    </article>
+  </dialog>
+  <table x-show="!loading" style="margin-top:0.5rem;">
+    <thead><tr>
+      <th @click="sortBy('name')" style="cursor:pointer;">名称 <span x-text="sortArrow('name')"></span></th>
+      <template x-if="isSuper"><th>租户</th></template>
+      <th @click="sortBy('seq')" style="cursor:pointer;">序列 <span x-text="sortArrow('seq')"></span></th>
+      <th>适用角色</th><template x-if="canManage"><th>操作</th></template>
+    </tr></thead>
+    <tbody>
+      <template x-for="r in sortedItems()" :key="r.id">
+        <tr>
+          <td x-text="r.name"></td>
+          <template x-if="isSuper"><td x-text="r.tenant_name || '—'"></td></template>
+          <td x-text="seqLabel(r)"></td>
+          <td x-text="(r.role_codes||[]).length?(r.role_codes.map((c,i)=>c+' '+(r.role_names[i]||'')).join(', ')):'全部角色'"></td>
+          <template x-if="canManage"><td>
+            <button class="secondary outline" @click="edit(r)" style="padding:0.1rem 0.5rem;">编辑</button>
+            <button class="secondary outline" @click="del(r.id)" style="padding:0.1rem 0.5rem;">删除</button>
+          </td></template>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <div x-show="!loading && items.length > 0" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem;">
+    <small style="opacity:0.7;" x-text="'已显示 ' + items.length + ' / 共 ' + total + ' 条班次序列规则'"></small>
+    <button x-show="hasMore" class="outline" style="padding:0.2rem 0.7rem;"
+            @click="loadMore()" :disabled="loadingMore"
+            x-text="loadingMore ? '加载中…' : '加载更多'">
+    </button>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+{% endblock %}

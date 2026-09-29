@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}生成排班 · {{ app_name }}{% endblock %}
+{% block content %}
+<style>
+.nurse-scroll{scrollbar-width:thin;scrollbar-color:var(--pico-muted-color) transparent;}
+.nurse-scroll::-webkit-scrollbar{width:8px;}
+.nurse-scroll::-webkit-scrollbar-thumb{background:var(--pico-muted-border-color);border-radius:4px;}
+.nurse-scroll::-webkit-scrollbar-track{background:transparent;}
+</style>
+<div x-data="gen()" x-init="init()">
+  <h2>生成排班</h2>
+  <div x-show="lastResultId" style="margin-bottom:1rem; font-size:0.9em;">
+    <a :href="'/pages/schedules/'+lastResultId" class="secondary outline" style="padding:0.15rem 0.6rem;">查看上次生成结果</a>
+    <button type="button" class="outline" style="padding:0.15rem 0.5rem; margin-left:0.4rem;" @click="clearLastResult()">清除</button>
+  </div>
+  <div x-show="lastError" style="margin-bottom:1rem; padding:0.5rem 0.8rem; background:#e76f5122; border-left:4px solid #e76f51; font-size:0.9em;">
+    <strong>上次生成未完成：</strong> <span x-text="lastError"></span>
+    <a :href="'/pages/schedules/'+lastErrorId" style="margin-left:0.4rem;" x-show="lastErrorId">查看</a>
+    <button type="button" class="outline" style="padding:0.1rem 0.4rem; margin-left:0.4rem;" @click="clearLastError()">清除</button>
+  </div>
+  <div x-show="subChecked && !subActive" style="margin-bottom:1rem; padding:0.8rem 1rem; background:#e76f5122; border-left:4px solid #e76f51;">
+    <strong>订阅未开通或已过期</strong> — 当前租户无法生成排班,请联系平台管理员开通订阅。
+  </div>
+  <div x-show="subActive && sub" style="margin-bottom:1rem; padding:0.4rem 1rem; background:#2a9d8f22; border-left:4px solid #2a9d8f;">
+    订阅生效中(套餐 <span x-text="sub ? sub.plan : ''"></span><template x-if="sub && sub.ends_at">,到期 <span x-text="sub.ends_at.slice(0,10)"></span></template>)<span x-text="' · 护士最多 ' + nurseLimitText"></span><span x-show="maxPeriodDays" x-text="' · 排班周期最长 ' + maxPeriodDays + ' 天'"></span><span x-show="!maxPeriodDays"> · 排班周期不限</span>
+  </div>
+  <div x-show="checked && !hasRole" style="margin-bottom:1rem; padding:0.8rem 1rem; background:#e76f5122; border-left:4px solid #e76f51;">
+    <strong>无权限</strong> — 当前角色为 <span x-text="role || '?'"></span>,仅 <code>scheduler</code> / <code>tenant_admin</code> / <code>super_admin</code> 可生成排班。
+  </div>
+  <form @submit.prevent="submit()" x-show="!running && !done" x-disabled="!canGenerate">
+    <div x-show="isSuper" style="max-width:480px;">
+      <label>目标租户(super_admin 代租户生成)</label>
+      <div style="display:flex; align-items:center; gap:0.5rem;">
+        <select x-model="targetTenant" @change="loadTenantData()" style="flex:1; margin-bottom:0;">
+          <option value="">请选择…</option>
+          <template x-for="t in tenants" :key="t.id">
+            <option :value="t.id" x-text="t.name"></option>
+          </template>
+        </select>
+        <span x-text="''"
+              :style="'display:inline-block;width:0.8rem;height:0.8rem;border-radius:50%;background:' + (targetTenant && subByTenant[targetTenant] ? '#2a9d8f' : (targetTenant ? '#e76f51' : '#999'))"
+              :title="targetTenant ? (subByTenant[targetTenant] ? '已订阅' : '未订阅') : '未选择租户'"></span>
+        <span style="font-size:0.85rem; white-space:nowrap;" x-text="!targetTenant ? '未选择' : (subByTenant[targetTenant] ? '订阅生效中' : '订阅未开通')"></span>
+      </div>
+    </div>
+    <div class="grid">
+      <label>周期起始
+        <input type="date" x-model="form.period_start" required>
+      </label>
+      <label>天数
+        <input type="number" min="1" :max="maxPeriodDays" x-model.number="form.period_days" required>
+        <small x-show="maxPeriodDays" style="opacity:0.7;" x-text="'排班周期最长 ' + maxPeriodDays + ' 天'"></small>
+        <small x-show="!maxPeriodDays" style="opacity:0.7;">排班周期不限</small>
+      </label>
+    </div>
+    <div>
+      <label>求解超时(秒) <input type="number" min="1" x-model.number="form.solver_config.timeout_seconds"></label>
+      <label style="display:flex; align-items:center; gap:0.45rem; margin-top:0.45rem;">
+        <input type="checkbox" x-model="form.long_run">
+        <span>大任务模式（显式允许长时间求解）</span>
+      </label>
+    </div>
+
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap:1rem; align-items:start;">
+      <fieldset>
+        <legend>参加排班的护士</legend>
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;">
+          <label style="margin:0;">
+            <input type="radio" name="nurse-scope" value="all" x-model="nurseScope" @change="setNurseScope('all')">
+            全部可排班护士
+          </label>
+          <label style="margin:0;">
+            <input type="radio" name="nurse-scope" value="selected" x-model="nurseScope" @change="setNurseScope('selected')">
+            手动选择护士
+          </label>
+        </div>
+        <p x-show="!nurseManual" style="margin:0.2rem 0 0.4rem; font-size:0.82em; opacity:0.7;">
+          提交时不带护士筛选，求解器将使用全部 <span x-text="nurseTotal || nurses.length"></span> 名可排班护士。
+        </p>
+        <p x-show="nurseManual" style="margin:0.2rem 0 0.4rem; font-size:0.82em; opacity:0.7;">
+          提交时仅使用勾选名单；至少选择一名护士。若还有未加载护士，请先加载更多。
+        </p>
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+          <button type="button" class="outline" x-show="nurseManual" style="padding:0.15rem 0.6rem;" @click="selectLoadedNurses()">勾选已加载名单</button>
+          <button type="button" class="outline" x-show="nurseManual" style="padding:0.15rem 0.6rem;" @click="selectedNurseIds=[]">清空已选</button>
+          <span style="font-size:0.8em;opacity:0.7;" x-text="'已选 ' + selectedNurseIds.length + ' / ' + nurses.length"></span>
+        </div>
+        <div class="nurse-scroll" style="max-height:18rem;overflow:auto; border:1px solid var(--pico-muted-border-color); border-radius:0.3rem; padding:0.4rem;">
+          <template x-for="(group, dept) in nursesByDept" :key="dept">
+            <div>
+              <strong style="font-size:0.85em;" x-text="dept"></strong>
+              <template x-for="n in group" :key="n.id">
+                <label style="margin:0;">
+                  <input type="checkbox" :value="n.id" x-model="selectedNurseIds" :disabled="!nurseManual">
+                  <span x-text="n.last_name + n.first_name + ' (' + n.employee_id + ')'"></span>
+                </label>
+              </template>
+            </div>
+          </template>
+          <p x-show="nurses.length===0" style="opacity:0.7;font-size:0.85em;">无可排班护士。</p>
+        </div>
+        <div x-show="nurses.length > 0" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem;">
+          <small style="font-size:0.75em; opacity:0.6;" x-text="'已加载 ' + nurses.length + ' / 共 ' + nurseTotal + ' 名可排班护士'"></small>
+          <button x-show="hasMoreNurses" type="button" class="outline" style="padding:0.1rem 0.5rem; font-size:0.78em;"
+                  @click="loadMoreNurses()" :disabled="nurseLoadingMore"
+                  x-text="nurseLoadingMore ? '加载中…' : '加载更多'">
+          </button>
+        </div>
+        <small x-show="showBatchHint" style="display:block; margin-top:0.4rem; color:var(--pico-primary);">
+          当前规模约 <span x-text="workloadNurseDays"></span> nurse-days，建议按科室分批生成；大任务需显式勾选长任务模式。
+        </small>
+      </fieldset>
+      <fieldset>
+        <legend>应用的规则</legend>
+        <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.5rem;">
+          <label style="margin:0;">
+            <input type="radio" name="rule-scope" value="all" x-model="ruleScope" @change="setRuleScope('all')">
+            全部启用规则
+          </label>
+          <label style="margin:0;">
+            <input type="radio" name="rule-scope" value="selected" x-model="ruleScope" @change="setRuleScope('selected')">
+            手动选择规则
+          </label>
+        </div>
+        <p x-show="!ruleManual" style="margin:0.2rem 0 0.4rem; font-size:0.82em; opacity:0.7;">
+          提交时不带规则筛选，求解器将使用全部启用规则。
+        </p>
+        <p x-show="ruleManual" style="margin:0.2rem 0 0.4rem; font-size:0.82em; opacity:0.7;">
+          仅提交勾选规则；某一类没有勾选时，明确表示不应用该类规则。
+        </p>
+        <div style="display:flex;gap:0.5rem;align-items:center;margin-bottom:0.5rem;">
+          <button type="button" class="outline" x-show="ruleManual" style="padding:0.15rem 0.6rem;" @click="selectLoadedRules()">勾选已加载规则</button>
+          <button type="button" class="outline" x-show="ruleManual" style="padding:0.15rem 0.6rem;" @click="selectedSmRuleIds=[]; selectedSeqRuleIds=[]">清空已选</button>
+          <span style="font-size:0.8em;opacity:0.7;" x-text="'已选 ' + (selectedSmRuleIds.length + selectedSeqRuleIds.length) + ' / ' + (smRules.length + seqRules.length)"></span>
+        </div>
+        <div style="max-height:18rem;overflow:auto;">
+          <div x-show="smRules.length===0 && seqRules.length===0" style="opacity:0.7; font-size:0.9em;">该租户暂无启用的规则。</div>
+          <div>
+            <strong style="font-size:0.8em;">技能组合 <small style="font-weight:normal;opacity:0.6;" x-text="'已加载 ' + smRules.length + ' / 共 ' + smRuleTotal + ' 条'"></small></strong>
+            <p x-show="smRules.length" style="margin:0.2rem 0; opacity:0.6; font-size:0.78em;">规定每个班次必须配备的角色（及可选技能）人数，勾选的规则将作为排班硬性约束。</p>
+            <p x-show="smRules.length===0" style="margin:0.2rem 0; opacity:0.7; font-size:0.8em;">暂无 — 表示不对各班次的角色/技能人数作硬性要求，排班数量仅由护士合同驱动。可在<a href="/pages/rules">规则</a>页新增。</p>
+            <template x-for="r in smRules" :key="r.id">
+              <div style="margin:0.3rem 0; padding:0.3rem 0.4rem; border:1px solid var(--pico-muted-border-color); border-radius:0.3rem; font-size:0.82em;">
+                <label style="margin:0; font-weight:600;">
+                  <input type="checkbox" :value="r.id" x-model="selectedSmRuleIds" :disabled="!ruleManual">
+                  <span x-text="r.name"></span>
+                </label>
+                <div style="margin-left:1.2rem; margin-top:0.15rem; opacity:0.85;">
+                  <div><span style="opacity:0.6;">班次：</span><span x-text="(r.shift_template_code||'')+' '+(r.shift_template_name||'—')"></span></div>
+                  <div><span style="opacity:0.6;">需求：</span><span x-text="(r.requirements||[]).length ? (r.requirements||[]).map(q=>(q.role_id ? ((q.role_code||'')+' '+(q.role_name||'')) : '任意角色')+(q.skill_code?('（'+q.skill_code+' '+q.skill_name+'）'):'')+' ×'+q.count).join('； ') : '无'"></span></div>
+                </div>
+              </div>
+            </template>
+            <div x-show="smRules.length > 0" style="display:flex; align-items:center; gap:0.4rem; margin-top:0.3rem;">
+              <button x-show="hasMoreSmRules" type="button" class="outline" style="padding:0.1rem 0.5rem; font-size:0.75em;"
+                      @click="loadMoreSmRules()" :disabled="smRuleLoadingMore"
+                      x-text="smRuleLoadingMore ? '加载中…' : '加载更多'">
+              </button>
+            </div>
+          </div>
+          <div style="margin-top:0.5rem;">
+            <strong style="font-size:0.8em;">班次序列 <small style="font-weight:normal;opacity:0.6;" x-text="'已加载 ' + seqRules.length + ' / 共 ' + seqRuleTotal + ' 条'"></small></strong>
+            <p x-show="seqRules.length===0" style="margin:0.2rem 0; opacity:0.7; font-size:0.8em;">暂无 — 表示不禁止任何连续班次组合（如夜班→早班），所有排班序列均允许。可在<a href="/pages/rules">规则</a>页新增。</p>
+            <template x-for="r in seqRules" :key="r.id">
+              <label style="margin:0; display:block; font-size:0.85em;">
+                <input type="checkbox" :value="r.id" x-model="selectedSeqRuleIds" :disabled="!ruleManual">
+                <span x-text="r.name + ' · ' + seqLabel(r) + ' · ' + ((r.role_codes||[]).length?(r.role_codes.join(',')):'全部角色')"></span>
+              </label>
+            </template>
+            <div x-show="seqRules.length > 0" style="display:flex; align-items:center; gap:0.4rem; margin-top:0.3rem;">
+              <button x-show="hasMoreSeqRules" type="button" class="outline" style="padding:0.1rem 0.5rem; font-size:0.75em;"
+                      @click="loadMoreSeqRules()" :disabled="seqRuleLoadingMore"
+                      x-text="seqRuleLoadingMore ? '加载中…' : '加载更多'">
+              </button>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+    </div>
+    <button type="submit" :disabled="!canGenerate">
+      <span x-show="precheckLoading && !precheckResult">检查排班条件…</span>
+      <span x-show="!precheckLoading || precheckResult">提交生成</span>
+    </button>
+    <p x-show="subActive && hasRole && generationBlockReason" style="margin-top:0.4rem; color:crimson; font-size:0.85em;" x-text="generationBlockReason"></p>
+    <p x-show="error" style="color:crimson; font-weight:600; padding:0.5rem 0.8rem; background:#e76f5122; border-left:4px solid #e76f51;" x-text="error"></p>
+  </form>
+
+  <div x-show="running" style="margin-top:1rem;">
+    <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+      <h3 style="margin:0;" x-text="statusText"></h3>
+      <button type="button" class="outline" x-show="canCancel" @click="cancelRequest()"
+              :disabled="cancelPending" x-text="cancelPending ? '取消中…' : '取消任务'"></button>
+    </div>
+    <p x-show="solverSettingsText" style="margin:0.2rem 0; font-size:0.85em; opacity:0.8;" x-text="solverSettingsText"></p>
+    <div class="progress-bar"><div :style="'width:'+progress+'%'"></div></div>
+    <p x-text="message"></p>
+  </div>
+
+  <div x-show="done" style="margin-top:1rem; padding:0.8rem 1rem; background:#2a9d8f22; border-left:4px solid #2a9d8f;">
+    <h3 style="margin:0 0 0.4rem 0;">✅ 排班生成完成</h3>
+    <p style="margin:0.2rem 0;" x-text="'周期 ' + form.period_start + ' 起 ' + form.period_days + ' 天'"></p>
+    <p style="margin:0.2rem 0;" x-text="doneStats"></p>
+    <div style="margin-top:0.6rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <a :href="'/pages/schedules/'+requestId" class="button">查看结果</a>
+      <button type="button" class="outline" @click="reset()">再生成一次</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/generate.js"></script>
+{% endblock %}

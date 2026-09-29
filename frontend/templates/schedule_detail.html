@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}排班详情 · {{ app_name }}{% endblock %}
+{% block head %}
+<style>
+  .version-chip.effective {
+    border-color: var(--pico-primary,#2069ff);
+    background: color-mix(in srgb,var(--pico-primary,#2069ff) 10%,transparent);
+    font-weight: 700;
+  }
+</style>
+{% endblock %}
+{% block content %}
+{# request_id is injected via a data-attribute (not x-data) so the double quotes
+   in Jinja's tojson don't terminate the x-data attribute value prematurely. #}
+<div x-data="detail()" data-request-id="{{ request_id }}" x-init="init()">
+  <div style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:1rem;">
+    <span></span>
+    <h2 style="margin:0; text-align:center;">排班详情</h2>
+    <a href="/pages/schedules" class="secondary outline" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0 0 0 auto; line-height:1.2;">返回排班记录</a>
+  </div>
+  <hr style="margin:1rem 0 1.25rem; border:0; border-top:1px dashed var(--pico-muted-border-color,#b8c1cc);">
+  <p x-show="loading">加载中…</p>
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="loaded && !error" style="margin:0 0 0.4rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85em;" :title="requestId" x-text="'记录 ID：'+displayId+' · 显示版本：V'+sched.version"></p>
+  <div x-show="loaded && !error && versions.length" style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;margin:0 0 0.75rem;">
+    <span style="font-size:0.85em;opacity:0.8;">版本</span>
+    <template x-for="item in versionOptions()" :key="item.id">
+      <button type="button" class="secondary outline" @click="switchVersion(item.version)"
+              :class="versionLabelClass(item)"
+              :aria-pressed="item.version === sched.version"
+              style="width:auto;margin:0;padding:0.15rem 0.5rem;font-size:0.8em;line-height:1.2;"
+              x-text="versionButtonText(item)"></button>
+    </template>
+    <span x-show="!isLatestVersion" style="font-size:0.8em;color:#a60;" x-text="'正在查看 V'+sched.version+' 历史版本，仅可查看和下载'"></span>
+    <span x-show="!isActiveVersion" style="font-size:0.8em;color:#a60;" x-text="'当前浏览 V'+sched.version+'；生效版本为 V'+activeVersion"></span>
+    <button type="button" class="secondary outline" data-testid="schedule-version-delete"
+            x-show="!isActiveVersion && versions.length>1" @click="deleteVersion()"
+            :disabled="deletingVersion"
+            style="width:auto;margin:0;padding:0.15rem 0.5rem;font-size:0.8em;line-height:1.2;"
+            x-text="deletingVersion ? '删除中…' : '删除当前版本'"></button>
+    <span x-show="deleteError" style="font-size:0.8em;color:#c00;" x-text="deleteError"></span>
+  </div>
+
+  <div x-show="loaded && !error">
+    <div class="detail-toolbar">
+      <div>
+        <p style="margin:0;">周期 <span x-text="sched.period_start"></span> · <span x-text="sched.period_days"></span> 天 · 结果 <span x-text="sched.outcome"></span><template x-if="sched.requested_by_name || sched.requested_by"><span> · 操作账号 <span :title="sched.requested_by || ''" x-text="sched.requested_by_name || sched.requested_by"></span></span></template></p>
+        <p x-show="sched.summary?.preference_stats" style="margin:0.25rem 0 0;font-size:0.85em;opacity:0.85;">
+          排班期望：<span x-text="sched.summary?.preference_stats?.satisfied ?? 0"></span>/<span x-text="sched.summary?.preference_stats?.loaded ?? 0"></span> 个期望组已满足，<span x-text="sched.summary?.preference_stats?.violated ?? 0"></span> 个未满足
+        </p>
+      </div>
+      <div class="detail-actions">
+        <div class="view-switch" role="group" aria-label="显示格式">
+          <button type="button" :class="viewMode === 'table' ? 'active' : ''" @click="viewMode = 'table'" :aria-pressed="viewMode === 'table'">表格模式</button>
+          <button type="button" :class="viewMode === 'calendar' ? 'active' : ''" @click="viewMode = 'calendar'" :aria-pressed="viewMode === 'calendar'">日历模式</button>
+        </div>
+        <span>下载格式</span>
+        <select aria-label="下载格式" x-model="exportFormat" style="width:auto; font-size:0.85em; padding:0.2rem 1.4rem 0.2rem 0.5rem; margin:0; appearance:none; -webkit-appearance:none; -moz-appearance:none; background-image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%226%22 viewBox=%220 0 10 6%22><path d=%22M1 1l4 4 4-4%22 stroke=%22%23888%22 fill=%22none%22 stroke-width=%221.2%22/></svg>'); background-repeat:no-repeat; background-position:right 0.4rem center; border:1px solid var(--pico-muted-border-color,#ccc); border-radius:0.3rem; line-height:1.2;">
+          <option value="csv">CSV</option>
+          <option value="txt">TXT</option>
+          <option value="json">JSON</option>
+          <option value="pdf">PDF</option>
+        </select>
+          <button class="secondary outline" @click="download()" :disabled="(!hasResult && !emptyResult) || pendingResolve" :title="hasResult || emptyResult ? '' : '排班完成后可下载'" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0; line-height:1.2;">下载</button>
+          <button x-show="hasResult && !editMode && !pendingResolve" class="secondary outline" @click="startEdit()" :disabled="!isLatestVersion" :title="isLatestVersion ? '' : '仅最新版本可编辑'" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0; line-height:1.2;">编辑</button>
+          <button x-show="hasResult && !editMode && !resolveMode && !pendingResolve" data-testid="schedule-resolve-open" class="secondary outline" @click="openResolve()" :disabled="!isLatestVersion" :title="isLatestVersion ? '' : '仅最新版本可局部重排'" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0; line-height:1.2;">局部重排</button>
+          <template x-if="editMode">
+            <span style="display:inline-flex;gap:0.4rem;align-items:center;">
+              <span style="font-size:0.8em;color:var(--pico-primary,#2069ff);font-weight:bold;">✏️ 编辑中</span>
+              <button data-testid="schedule-save" class="primary" @click="saveEdit()" :disabled="saving" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0; line-height:1.2;" x-text="saving ? '保存中…' : '保存'"></button>
+              <button class="secondary outline" @click="cancelEdit()" :disabled="saving" style="width:auto; font-size:0.85em; padding:0.2rem 0.6rem; margin:0; line-height:1.2;">取消</button>
+            </span>
+          </template>
+      </div>
+
+      <div x-show="pendingResolve" x-cloak data-testid="schedule-resolve-pending" style="margin-top:0.75rem;padding:0.75rem 1rem;background:#fff8e6;border:1px solid #e9c46a;border-radius:0.4rem;">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.5rem;">
+          <div>
+            <strong style="color:#a60;">局部重排预览 · 尚未保存</strong>
+            <p style="margin:0.15rem 0 0;font-size:0.8em;">
+              当前保存版本 v<span x-text="sched.version"></span>；确认后将新增 v<span x-text="resolveBaseVersion + 1"></span>，旧版本继续保留。
+            </p>
+          </div>
+          <div style="display:flex;gap:0.4rem;align-items:center;">
+            <button data-testid="schedule-resolve-save" class="primary" @click="saveResolve()" :disabled="savingResolve" style="width:auto;font-size:0.85em;padding:0.25rem 0.7rem;margin:0;line-height:1.2;" x-text="savingResolve ? '保存中…' : '保存为新版本'"></button>
+            <button class="secondary outline" @click="discardResolve()" :disabled="savingResolve" style="width:auto;font-size:0.85em;padding:0.25rem 0.7rem;margin:0;line-height:1.2;">放弃重排</button>
+          </div>
+        </div>
+        <label x-show="resolveNeedsOverride" style="display:block;margin-top:0.5rem;font-size:0.85em;">
+          技能配比不满足，请输入覆盖原因：
+          <input x-model="resolveOverrideReason" placeholder="例如：人手不足，临时调整" style="width:100%;padding:0.3rem;margin-top:0.2rem;">
+        </label>
+        <p x-show="resolveSaveError" style="margin:0.5rem 0 0;color:#c00;font-size:0.85em;" x-text="resolveSaveError"></p>
+      </div>
+    </div>
+
+    <div x-show="resolveMode" x-cloak style="position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;background:#0008;padding:1rem;">
+      <div style="width:min(760px,94vw);max-height:90vh;overflow:auto;background:var(--pico-card-background-color);border-radius:0.5rem;padding:1rem 1.25rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+          <h3 style="margin:0;">局部重排</h3>
+          <button class="secondary outline" @click="cancelResolve()" :disabled="resolveSaving" style="width:auto;margin:0;padding:0.2rem 0.6rem;">关闭</button>
+        </div>
+        <p style="margin:0.5rem 0 0.75rem;font-size:0.85em;">
+          勾选的护士在所选日期范围内的已有班次将被锁定；范围外班次和未勾选护士会重新求解。开始重排只生成预览；保存前不会修改数据库，旧版本也会完整保留。
+        </p>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
+          <strong style="font-size:0.9em;">
+            已锁定 <span x-text="lockedNurseCount"></span> / <span x-text="grid.length"></span> 位护士 ·
+            <span x-text="lockedCellCount"></span> 个已有班次
+          </strong>
+          <button class="secondary outline" @click="grid.forEach(row => resolvePinned[row.nurseId] = true)" :disabled="resolveSaving" style="width:auto;margin:0;padding:0.2rem 0.6rem;">全选护士</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:0.75rem;margin-bottom:0.75rem;padding:0.65rem;border:1px solid var(--pico-muted-border-color,#ccc);border-radius:0.3rem;">
+          <label style="display:flex;flex-direction:column;gap:0.2rem;margin:0;font-size:0.85em;">
+            锁定开始日期
+            <input type="date" data-testid="schedule-resolve-date-start" x-model="resolveDateStart" @change="normalizeResolveDates()" :min="dates[0]" :max="dates[dates.length-1]" :disabled="resolveSaving" style="width:auto;min-width:150px;margin:0;font-size:0.9em;">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:0.2rem;margin:0;font-size:0.85em;">
+            锁定结束日期
+            <input type="date" data-testid="schedule-resolve-date-end" x-model="resolveDateEnd" @change="normalizeResolveDates()" :min="dates[0]" :max="dates[dates.length-1]" :disabled="resolveSaving" style="width:auto;min-width:150px;margin:0;font-size:0.9em;">
+          </label>
+          <button class="secondary outline" data-testid="schedule-resolve-full-range" @click="setFullResolveRange()" :disabled="resolveSaving" style="width:auto;margin:0;padding:0.35rem 0.7rem;">整个周期</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:0.25rem;max-height:220px;overflow:auto;border:1px solid var(--pico-muted-border-color,#ccc);border-radius:0.3rem;padding:0.5rem;">
+          <template x-for="row in grid" :key="row.nurseId">
+            <label style="display:flex;align-items:center;gap:0.4rem;margin:0;font-size:0.9em;">
+              <input type="checkbox" :checked="resolvePinned[row.nurseId]" @change="togglePin(row.nurseId)" :disabled="resolveSaving">
+              <span x-text="row.nurse"></span>
+            </label>
+          </template>
+        </div>
+        <div x-show="resolveError" style="margin-top:0.75rem;padding:0.5rem 0.75rem;background:#fff0f0;border-left:4px solid #e00;color:#c00;font-size:0.85em;" x-text="resolveError"></div>
+        <div x-show="resolveDiff.length" style="margin-top:0.75rem;">
+          <p style="margin:0 0 0.35rem;font-size:0.85em;font-weight:bold;">
+            预览完成（<span x-text="resolveDiff.length"></span> 项变化），尚未保存：
+          </p>
+          <div style="max-height:220px;overflow:auto;font-size:0.8em;">
+            <template x-for="(item,index) in resolveDiff" :key="index">
+              <p style="margin:0.15rem 0;" :style="item.action==='removed' ? 'color:#c00;' : (item.action==='added' ? 'color:#080;' : 'color:#a60;')">
+                <span x-text="item.action==='removed' ? '➖' : (item.action==='added' ? '➕' : '🔄')"></span>
+                <span x-text="nurseLabel(item.nurse_id)"></span> · <span x-text="item.date"></span> ·
+                <span x-text="shiftLabel(item.old_shift_template_id)"></span> → <span x-text="shiftLabel(item.new_shift_template_id)"></span>
+              </p>
+            </template>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:1rem;">
+          <button x-show="!resolveDiff.length" data-testid="schedule-resolve-run" class="primary" @click="runResolve()" :disabled="resolveSaving || !lockedNurseCount" style="width:auto;margin:0;padding:0.3rem 0.8rem;" x-text="resolveSaving ? '求解中…' : '开始重排'"></button>
+          <button x-show="resolveDiff.length" data-testid="schedule-resolve-preview" class="primary" @click="showResolvePreview()" :disabled="resolveSaving" style="width:auto;margin:0;padding:0.3rem 0.8rem;">预览新表（未保存）</button>
+        </div>
+      </div>
+    </div>
+      <div data-testid="schedule-edit-errors" x-show="editErrors.length" style="margin-top:0.4rem;padding:0.4rem 0.6rem;background:#fff0f0;border:1px solid #e00;border-radius:0.3rem;">
+        <template x-if="needsOverride">
+          <div style="margin-bottom:0.4rem;">
+            <label style="font-size:0.85em;color:#333;">技能配比不满足，请输入覆盖原因：</label>
+            <input x-model="overrideReason" placeholder="例如：人手不足，临时调整" style="width:100%;font-size:0.85em;padding:0.3rem;margin-top:0.2rem;">
+          </div>
+        </template>
+        <template x-for="(err,idx) in editErrors" :key="idx">
+        <p style="margin:0.15rem 0;font-size:0.85em;color:#c00;">
+          <span x-text="err.msg"></span>
+          <template x-if="err.date"><span>（<span x-text="err.date"></span>）</span></template>
+        </p>
+      </template>
+    </div>
+    <div x-show="hasResult" style="margin-top:0.4rem; font-size:0.8em; opacity:0.8;">
+      <template x-if="legend.length===0">
+        <p style="margin:0; opacity:0.7;">（无班次模板信息）</p>
+      </template>
+      <p style="margin:0;" x-text="legendText"></p>
+    </div>
+
+    <div x-show="emptyResult" style="margin-top:1rem; padding:0.8rem 1rem; background:#e9c46a22; border-left:4px solid #e9c46a;">
+      <p style="margin:0;">排班已完成，但本次结果为空（0 个班次安排）。该租户可能缺少技能组合规则或护士合同配置，求解器没有约束要求排班。请检查 <a :href="'/pages/rules'">规则</a> 与护士合同设置。</p>
+    </div>
+
+    <div x-show="!hasResult && !emptyResult" style="margin-top:1rem;">
+      <p>排班尚未生成完成，或生成失败。当前状态见 <a href="/pages/schedules">列表</a>。</p>
+      <div x-show="failedMsg" style="margin-top:0.5rem; padding:0.6rem 0.9rem; background:#e76f5122; border-left:4px solid #e76f51; color:crimson;">
+        <p style="margin:0; font-weight:bold;">失败原因：</p>
+        <p style="margin:0.3rem 0 0;" x-text="failedMsg"></p>
+      </div>
+    </div>
+
+    <div x-show="hasResult && grid.length && viewMode === 'table'" style="margin-top:1rem; overflow-x:auto;"
+         :style="editMode ? 'margin-top:1rem; overflow-x:auto; outline:2px solid var(--pico-primary,#2069ff); outline-offset:4px; border-radius:0.3rem;' : 'margin-top:1rem; overflow-x:auto;'">
+      <table class="schedule-grid">
+        <thead>
+          <tr>
+            <th style="position:sticky;left:0;background:var(--pico-card-background-color);">护士</th>
+            <template x-for="d in dates" :key="d">
+              <th x-text="d.slice(5)"></th>
+            </template>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in grid" :key="row.nurseId">
+            <tr>
+              <td style="position:sticky;left:0;background:var(--pico-card-background-color);font-weight:bold;" x-text="row.nurse"></td>
+              <template x-for="d in dates" :key="d">
+                <td class="cell-shift" :title="(row.cells[d]?(row.cells[d]+' '+(codeName[row.cells[d]]||'')+(codeTime[row.cells[d]]?(' '+codeTime[row.cells[d]]):'')):'空')">
+                  <template x-if="!editMode">
+                    <div x-text="row.cells[d] ? (codeName[row.cells[d]]||row.cells[d]) : '·'"></div>
+                  </template>
+                  <template x-if="editMode">
+                    <select :value="row.cells[d]||''" @change="row.cells[d]=$event.target.value"
+                            style="width:100%;font-size:0.8em;padding:0.15rem;margin:0;">
+                      <option value="">·</option>
+                      <template x-for="st in (sched.shift_templates||[])" :key="st.id">
+                        <option :value="st.code" x-text="st.code+' '+st.name" :selected="row.cells[d]===st.code"></option>
+                      </template>
+                    </select>
+                  </template>
+                </td>
+              </template>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <div x-show="hasResult && grid.length && viewMode === 'calendar'" class="calendar-scroll">
+      <template x-for="month in calendarMonths" :key="month.key">
+        <section class="calendar-month">
+          <header class="calendar-month-header">
+            <h3>
+              <span class="calendar-month-name" x-text="month.monthName"></span>
+              <span class="calendar-month-year" x-text="month.year"></span>
+            </h3>
+          </header>
+          <div class="calendar-grid" :aria-label="month.title + ' 排班日历'">
+            <span class="calendar-weekday">日</span>
+            <span class="calendar-weekday">一</span>
+            <span class="calendar-weekday">二</span>
+            <span class="calendar-weekday">三</span>
+            <span class="calendar-weekday">四</span>
+            <span class="calendar-weekday">五</span>
+            <span class="calendar-weekday">六</span>
+            <template x-for="(cell, index) in month.cells" :key="cell.date || month.key + '-offset-' + index">
+              <div :class="cellClasses(cell)">
+                <time class="calendar-date" :datetime="cell.date" x-text="cell.day"></time>
+                <div class="calendar-shifts">
+                  <template x-for="shift in cell.assignments" :key="shift.id">
+                    <span class="calendar-shift" x-text="shift.label" :title="shift.title"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+      </template>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}租户管理 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="tenantsPage()" x-init="load()">
+  <h2>租户管理 <small style="font-size:0.6em;opacity:0.6;">超级管理员</small></h2>
+  <p>新增或删除租户，并配置该租户的排班订阅。删除租户会永久删除其全部护士、班次、规则和排班记录。</p>
+
+  <button class="secondary" @click="showCreate=!showCreate" x-text="showCreate ? '取消新增' : '新增租户'"></button>
+  <article x-show="showCreate" style="margin-top:0.75rem;">
+    <form @submit.prevent="create()">
+      <div class="grid">
+        <label>租户名称
+          <input x-model="createForm.name" required maxlength="200">
+        </label>
+        <label>租户标识(slug，创建后不可修改)
+          <input x-model="createForm.slug" required maxlength="100" pattern="[a-z0-9\-]+" placeholder="hospital-a">
+        </label>
+      </div>
+      <fieldset style="margin-top:0.75rem;">
+        <legend>租户管理员（用于登录）</legend>
+        <div class="grid">
+          <label>管理员邮箱
+            <input type="email" x-model="createForm.admin_email" required>
+          </label>
+          <label>初始密码
+            <input type="password" x-model="createForm.admin_password" required minlength="8">
+          </label>
+          <label>名
+            <input x-model="createForm.admin_first_name" required maxlength="100">
+          </label>
+          <label>姓
+            <input x-model="createForm.admin_last_name" required maxlength="100">
+          </label>
+        </div>
+      </fieldset>
+      <fieldset style="margin-top:0.75rem;">
+        <legend>排班订阅</legend>
+        <div class="grid">
+          <label>套餐
+            <select x-model="createForm.plan">
+              <template x-for="plan in createPlanOptions" :key="plan">
+                <option :value="plan" x-text="planLabel(plan)"></option>
+              </template>
+            </select>
+          </label>
+          <label>订阅开始
+            <input type="date" x-model="createForm.starts_at">
+          </label>
+          <label>订阅到期（留空=永久）
+            <input type="date" x-model="createForm.ends_at">
+          </label>
+          <label><input type="checkbox" x-model="createForm.subscribed"> 立即开通订阅</label>
+        </div>
+      </fieldset>
+      <button type="submit">创建租户</button>
+    </form>
+  </article>
+
+  <article x-show="showEdit" style="margin-top:0.75rem;">
+    <h3>编辑租户 <small x-text="editForm.slug"></small></h3>
+    <p x-show="editLoading" style="opacity:0.7;">管理员信息加载中…</p>
+    <form @submit.prevent="saveEdit()">
+      <fieldset>
+        <legend>基本信息</legend>
+        <div class="grid">
+          <label>租户名称
+            <input x-model="editForm.name" required maxlength="200">
+          </label>
+          <label>租户状态
+            <select x-model="editForm.is_active">
+              <option :value="true">启用</option>
+              <option :value="false">停用</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+      <fieldset style="margin-top:0.75rem;">
+        <legend>租户管理员</legend>
+        <template x-if="editForm.admin_missing">
+          <div style="border:1px solid var(--pico-primary); border-radius:0.4rem; padding:0.75rem;">
+            <strong style="display:block; margin-bottom:0.75rem; font-size:0.9em;">⚠ 该租户没有管理员，请补建</strong>
+            <div class="grid">
+              <label>管理员邮箱
+                <input type="email" x-model="editForm.admin_email" required placeholder="admin@example.com" :disabled="editLoading">
+              </label>
+              <label>初始密码（至少8位）
+                <input type="password" x-model="editForm.admin_password" required minlength="8" autocomplete="new-password" :disabled="editLoading">
+              </label>
+              <label>名
+                <input x-model="editForm.admin_first_name" required maxlength="100" :disabled="editLoading">
+              </label>
+              <label>姓
+                <input x-model="editForm.admin_last_name" required maxlength="100" :disabled="editLoading">
+              </label>
+            </div>
+          </div>
+        </template>
+        <template x-if="!editForm.admin_missing">
+          <div class="grid">
+            <label>管理员邮箱
+              <input type="email" x-model="editForm.admin_email" required :disabled="editLoading">
+            </label>
+          </div>
+        </template>
+      </fieldset>
+      <fieldset style="margin-top:0.75rem;">
+        <legend>排班订阅</legend>
+        <div class="grid">
+        <template x-if="editForm.plan === 'demo'">
+          <label>Demo 套餐（固定，不可更改）
+            <input value="demo" disabled>
+          </label>
+        </template>
+        <template x-if="editForm.plan !== 'demo'">
+          <label>套餐
+            <select x-model="editForm.plan">
+              <template x-for="plan in editPlanOptions" :key="plan">
+                <option :value="plan" x-text="planLabel(plan)"></option>
+              </template>
+            </select>
+          </label>
+        </template>
+        <template x-if="seatPackEnabled(editForm.plan)">
+          <label>席位包（每包10名护士）
+            <input type="number" min="0" step="1" x-model="editForm.seat_packs">
+          </label>
+        </template>
+          <label>订阅类型
+          <select x-model="editForm.subscription_type">
+            <option value="manual">手动</option>
+            <option value="trial">试用</option>
+            <option value="provider">自动续费</option>
+          </select>
+        </label>
+          <label>订阅开始
+          <input type="date" x-model="editForm.starts_at">
+        </label>
+          <label>订阅到期（留空=永久）
+          <input type="date" x-model="editForm.ends_at">
+        </label>
+          <label><input type="checkbox" x-model="editForm.subscribed"> 订阅</label>
+        </div>
+      </fieldset>
+      <div class="grid">
+        <button type="submit">保存</button>
+        <button type="button" class="secondary" @click="closeEdit()">取消</button>
+        <button type="button" class="secondary outline" style="padding:0.1rem 0.4rem; font-size:0.85em; white-space:nowrap;"
+                x-show="!editForm.admin_missing"
+                :disabled="!editForm.admin_mfa_enabled" title="仅当该租户管理员已开启两步验证时可用"
+                @click="resetAdminMfa()">重置两步验证</button>
+      </div>
+    </form>
+  </article>
+
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="notice" style="color:#2a9d8f;" x-text="notice"></p>
+
+  <div style="overflow-x:auto;">
+    <table x-show="!loading">
+      <thead>
+          <tr>
+            <th>租户标识(slug)</th><th>租户名称</th><th>租户状态</th><th>创建时间</th><th>套餐</th><th>类型</th><th>订阅开始</th><th>订阅到期(留空=永久)</th><th>订阅</th><th>操作</th>
+          </tr>
+      </thead>
+      <tbody>
+        <template x-for="row in rows" :key="row.tenant.id">
+          <tr>
+            <td>
+              <code x-text="row.tenant.slug"></code>
+            </td>
+            <td>
+              <a :href="'/pages/users?tenant_id='+encodeURIComponent(row.tenant.id)"
+                 class="tenant-name-link" title="进入该租户的用户管理"
+                 x-text="row.tenant.name"></a>
+            </td>
+            <td>
+              <span class="tag" :class="row.tenant.is_active ? 'tag-ok' : 'tag-fail'" x-text="row.tenant.is_active ? '启用' : '停用'"></span>
+            </td>
+            <td x-text="(row.tenant.created_at||'').slice(0,10)"></td>
+            <td x-text="row.edit.plan"></td>
+            <td x-text="row.edit.subscription_type"></td>
+            <td x-text="row.edit.starts_at || '—'"></td>
+            <td x-text="row.edit.ends_at || '永久'"></td>
+            <td>
+              <span class="tag" :class="subscriptionStatus(row).cls" x-text="subscriptionStatus(row).text"></span>
+            </td>
+            <td>
+	              <div style="display:flex; gap:0.3rem;">
+	                <button @click="openEdit(row)" class="outline" style="padding:0.2rem 0.6rem;">编辑</button>
+	                <button @click="remove(row)" class="outline" style="padding:0.2rem 0.6rem; color:crimson;">删除租户</button>
+	              </div>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+<script src="/static/js/tenants.js"></script>
+{% endblock %}

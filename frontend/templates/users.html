@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}用户管理 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="usersPage()" x-init="load()">
+  <h2>用户管理 <small style="font-size:0.6em;opacity:0.6;" x-text="isSuper ? '超级管理员' : '租户管理员'"></small></h2>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+    <p style="margin:0;">创建和维护本租户的登录账号。用户创建后自动归属当前租户，可按角色分配排班、查看等权限。</p>
+    <a x-show="isSuper" href="/pages/tenants" class="secondary outline" style="padding:0.2rem 0.6rem; white-space:nowrap;">返回租户管理</a>
+  </div>
+  <div x-show="currentTenantId" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+    <span class="tag tag-ok">租户名称：<strong x-text="currentTenantName || '加载中…'"></strong></span>
+    <span class="tag">租户标识：<code x-text="currentTenantSlug"></code></span>
+  </div>
+  </article>
+
+  <p x-show="isSuper && !tenantId" style="opacity:0.7;">选择租户后即可管理该租户的用户。</p>
+
+  <article x-show="isSuper && !tenantId">
+    <label>选择租户
+      <select :value="tenantId" @change="selectTenant($event.target.value)" required>
+        <option value="">请选择租户…</option>
+        <template x-for="tenant in tenants" :key="tenant.id">
+          <option :value="tenant.id" x-text="tenant.name + '（' + tenant.slug + '）'"></option>
+        </template>
+      </select>
+    </label>
+  </article>
+
+  <button class="secondary" x-show="!isSuper || tenantId" @click="toggleCreate()" x-text="showCreate ? '取消新增' : '新增用户'"></button>
+
+  <article x-show="showCreate && (!isSuper || tenantId)" style="margin-top:0.75rem;">
+    <form @submit.prevent="create()">
+      <div class="grid">
+        <label>邮箱
+          <input type="email" x-model="createForm.email" required>
+        </label>
+        <label>初始密码
+          <input type="password" x-model="createForm.password" required minlength="8">
+        </label>
+        <label>名
+          <input x-model="createForm.first_name" required maxlength="100">
+        </label>
+        <label>姓
+          <input x-model="createForm.last_name" required maxlength="100">
+        </label>
+        <label>系统角色
+          <select x-model="createForm.role" required @change="createForm.nurse_id=''">
+            <option value="scheduler">排班员</option>
+            <option value="nurse">护士</option>
+            <option value="viewer">访客</option>
+          </select>
+        </label>
+        <label x-show="createForm.role==='nurse'">
+          关联护士
+          <select x-model="createForm.nurse_id" :required="createForm.role==='nurse'" @change="syncNurse()">
+            <option value="">选择护士…</option>
+            <template x-for="nurse in nurseOptions(createForm.nurse_id)" :key="nurse.id">
+              <option :value="nurse.id" x-text="nurse.last_name + nurse.first_name + '（' + nurse.employee_id + '）'"></option>
+            </template>
+          </select>
+        </label>
+      </div>
+      <button type="submit" :disabled="!canCreate">创建用户</button>
+      <small x-show="createForm.role==='nurse' && !createForm.nurse_id" style="display:block;margin-top:0.4rem;color:crimson;">
+        护士用户必须关联一名护士资料后才能创建。
+      </small>
+    </form>
+  </article>
+
+  <article x-show="showEdit && (!isSuper || tenantId)" style="margin-top:0.75rem;">
+    <h3>编辑用户</h3>
+    <form @submit.prevent="update()">
+      <div class="grid">
+        <label>邮箱<span style="font-size:0.8em;">（创建后不可修改）</span>
+          <input type="email" x-model="editForm.email" readonly required>
+        </label>
+        <label>重置密码<span style="font-size:0.8em;">（管理员找回入口；留空则不修改）</span>
+          <input type="password" x-model="editForm.password" minlength="8" autocomplete="new-password">
+        </label>
+        <label>名
+          <input x-model="editForm.first_name" required maxlength="100">
+        </label>
+        <label>姓
+          <input x-model="editForm.last_name" required maxlength="100">
+        </label>
+        <label>系统角色
+          <input :value="roleNames[editForm.role] || editForm.role" readonly>
+        </label>
+        <label x-show="editForm.role==='nurse'">关联护士<span style="font-size:0.8em;">（创建后不可更改）</span>
+          <input :value="editForm.nurse_id ? (nurseNames[editForm.nurse_id] || editForm.nurse_id) : '—'" readonly
+                 style="color:var(--pico-muted-color);">
+        </label>
+        <label>状态
+          <select x-model="editForm.is_active" :disabled="editForm.id===currentUserId">
+            <option :value="true">启用</option>
+            <option :value="false">停用</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid">
+        <button type="submit" :disabled="!canUpdate">保存</button>
+        <button type="button" class="secondary" @click="closeEdit()">取消</button>
+      </div>
+    </form>
+  </article>
+
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="notice" style="color:#2a9d8f;" x-text="notice"></p>
+
+  <div x-show="!isSuper || tenantId" style="overflow-x:auto;">
+    <table x-show="!loading">
+      <thead>
+        <tr><th>用户</th><th>邮箱</th><th>系统角色</th><th>关联护士</th><th>状态</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        <template x-for="user in users" :key="user.id">
+          <tr>
+            <td x-text="user.last_name + user.first_name"></td>
+            <td x-text="user.email"></td>
+            <td x-text="roleNames[user.role] || user.role"></td>
+            <td x-text="user.nurse_id ? (nurseNames[user.nurse_id] || '—') : '—'"></td>
+            <td>
+              <span class="tag" :class="user.is_active ? 'tag-ok' : 'tag-fail'" x-text="user.is_active ? '启用' : '停用'"></span>
+            </td>
+            <td>
+              <button class="secondary outline" style="padding:0.05rem 0.45rem;" @click="editUser(user)">编辑</button>
+              <button x-show="isSuper" class="secondary outline" style="padding:0.05rem 0.45rem;" @click="resetMfa(user)">重置两步验证</button>
+              <button x-show="user.id!==currentUserId && (isSuper || user.role!=='tenant_admin')" class="secondary outline" style="padding:0.05rem 0.45rem; color:crimson;" @click="remove(user)">删除</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <p x-show="loading">加载中…</p>
+  <p x-show="!loading && !error && (!isSuper || tenantId) && users.length===0">当前租户暂无用户。</p>
+</div>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}申请使用 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="application-page" x-data="applyPage()" x-init="init()">
+  <article style="max-width: 760px; margin: 2.5rem auto;">
+    <hgroup>
+      <h1>申请使用</h1>
+      <h2>提交组织信息并验证邮箱，审核通过后创建租户</h2>
+    </hgroup>
+
+    <form @submit.prevent="submit()" x-show="!submitted">
+      <div class="grid">
+        <label>组织名称
+          <input type="text" x-model="form.organization_name" required minlength="2" maxlength="200">
+        </label>
+        <label>联系人
+          <input type="text" x-model="form.contact_name" required maxlength="200">
+        </label>
+      </div>
+      <div class="grid">
+        <label>联系邮箱
+          <input type="email" x-model="form.contact_email" required maxlength="320" autocomplete="email">
+        </label>
+        <label>国家/地区
+          <input type="text" x-model="form.country" required minlength="2" maxlength="100">
+        </label>
+      </div>
+      <div class="grid">
+        <label>时区
+          <input type="text" x-model="form.timezone" required maxlength="64" placeholder="Asia/Shanghai">
+        </label>
+        <label>预计护士人数
+          <input type="number" x-model.number="form.expected_nurse_count" required min="1" max="10000">
+        </label>
+      </div>
+      <label>使用场景
+        <textarea x-model="form.use_case_summary" required minlength="20" maxlength="4000" rows="5"></textarea>
+      </label>
+      <div class="grid">
+        <button type="submit" :disabled="loading">
+          <span x-show="!loading">提交申请</span>
+          <span x-show="loading">提交中…</span>
+        </button>
+        <button type="button" class="secondary" @click="reset()" :disabled="loading">重置</button>
+      </div>
+      <input type="text" name="company_website" x-model="form.honeypot" tabindex="-1"
+             autocomplete="off" aria-hidden="true" class="honeypot-field">
+    </form>
+
+    <div x-show="submitted" style="margin-top:1rem;">
+      <p class="form-success">申请已提交。如果信息有效，请到联系邮箱完成验证。</p>
+      <button type="button" class="outline" @click="resend()">重新发送验证邮件</button>
+    </div>
+    <p id="apply-error" role="alert" style="color:crimson;" x-show="error" x-text="error"></p>
+  </article>
+</div>
+
+<script src="/static/js/apply.js"></script>
+{% endblock %}

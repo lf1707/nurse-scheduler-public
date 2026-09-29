@@ -1,0 +1,153 @@
+# Reusable verification checks: lint, dependency audit, full test suite.
+#
+# Called by ci.yml for branch pushes and pull requests. Kept as a separate
+# workflow_call file so verification gates remain reusable.
+
+name: checks
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Ruff
+        run: uv run ruff check app/ scripts/
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Export locked requirements
+        run: |
+          uv export --frozen --all-extras --no-emit-project \
+            --format requirements-txt --output-file .audit-requirements.txt
+      - name: pip-audit
+        run: uvx pip-audit --requirement .audit-requirements.txt --no-deps --disable-pip --strict
+
+  mypy-report:
+    runs-on: ubuntu-latest
+    # TD-5 is complete: app and tests are strict-clean on 2026-09-22.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: MyPy strict report
+        run: uv run mypy app
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: nurse
+      POSTGRES_PASSWORD: nurse_test
+      POSTGRES_DB: nurse_scheduler
+      POSTGRES_HOST: 127.0.0.1
+      APP_DB_USER: nurse_app
+      APP_DB_PASSWORD: nurse_app_test
+      DATABASE_URL: postgresql+asyncpg://nurse_app:nurse_app_test@127.0.0.1:5432/nurse_scheduler
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/1
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/2
+      JWT_SECRET: github-ci-secret-not-used-for-production
+      SECRET_KEY: github-ci-secret-not-used-for-production
+      SUPER_ADMIN_EMAIL: admin@example.com
+      SUPER_ADMIN_PASSWORD: changeme123
+      TRUST_PROXY_FOR_CLIENT_IP: "true"
+      ENABLE_DEMO_TENANT: "true"
+      DEMO_TENANT_PASSWORD: ci-demo-password
+      DEMO_TENANT_GENERATE_SCHEDULE: "false"
+      API_BASE_URL: http://localhost:8000
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nurse
+          POSTGRES_PASSWORD: nurse_test
+          POSTGRES_DB: nurse_scheduler
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nurse -d nurse_scheduler"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Prepare PostgreSQL roles and apply migrations
+        run: |
+          PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nurse_app') THEN
+              EXECUTE format('CREATE ROLE nurse_app LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE', 'nurse_app_test');
+            END IF;
+          END $$;
+          GRANT ALL ON DATABASE nurse_scheduler TO nurse_app;
+          GRANT USAGE, CREATE ON SCHEMA public TO nurse_app;
+          ALTER DEFAULT PRIVILEGES FOR ROLE nurse IN SCHEMA public GRANT ALL ON TABLES TO nurse_app;
+          ALTER DEFAULT PRIVILEGES FOR ROLE nurse IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO nurse_app;
+          SQL
+          DATABASE_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:5432/$POSTGRES_DB" \
+            uv run alembic upgrade head
+          PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB -t -A \
+            -c "SELECT 'ALTER TABLE public.'||quote_ident(tablename)||' OWNER TO nurse_app;' FROM pg_tables WHERE schemaname='public' AND tableowner='nurse';" \
+            | PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB
+          PGPASSWORD=$POSTGRES_PASSWORD psql -h 127.0.0.1 -U $POSTGRES_USER -d $POSTGRES_DB -c \
+            "GRANT ALL ON ALL TABLES IN SCHEMA public TO nurse_app; GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO nurse_app;"
+      - name: Boot API and Celery worker
+        run: |
+          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+          uv run celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2 \
+            --queues=scheduling,ops > worker.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8000/health >/dev/null && break; sleep 1; done
+          curl -fsS http://localhost:8000/health
+      - name: Run test suite
+        run: uv run pytest -q app/tests/
+      - name: Upload service logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: |
+            api.log
+            worker.log
+          retention-days: 7
+          if-no-files-found: ignore

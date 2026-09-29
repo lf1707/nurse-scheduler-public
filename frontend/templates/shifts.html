@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}班次 · {{ app_name }}{% endblock %}
+{% block content %}
+<div x-data="shiftsPage()" x-init="load()">
+  <h2>班次模板</h2>
+  <div style="display:flex; flex-direction:column; align-items:flex-start; gap:.5rem;">
+    <template x-if="isSuper">
+      <label>租户
+        <select x-model="tenantId" @change="reloadForTenant()">
+          <option value="">全部租户（跨租户浏览）</option>
+          <template x-for="tenant in tenants" :key="tenant.id">
+            <option :value="tenant.id" :selected="tenant.id === tenantId" x-text="tenant.name"></option>
+          </template>
+        </select>
+      </label>
+    </template>
+    <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+      <button x-show="canManage" class="secondary" :disabled="!canCreateTarget" @click="toggleForm()" x-text="showForm ? '取消' : '新增班次'"></button>
+      <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建班次前请选择租户</small>
+    </div>
+  </div>
+
+  <dialog :open="showForm" x-show="showForm" style="display:none;">
+    <article>
+      <h3><template x-if="editingId"><span>编辑班次模板</span></template><template x-if="!editingId"><span>新增班次模板</span></template></h3>
+      <form @submit.prevent="submit()">
+        <label>代码 <input x-model="form.code" placeholder="E / N / D" required></label>
+        <label>名称 <input x-model="form.name" required></label>
+        <div class="grid">
+          <label>开始 <input type="time" x-model="form.start_time" required></label>
+          <label>结束 <input type="time" x-model="form.end_time" required></label>
+        </div>
+        <label>时长(小时) <input type="number" step="0.5" x-model.number="form.duration_hours"></label>
+        <label>日组
+          <select x-model="form.day_group_id" required>
+            <option value="" disabled>选择…</option>
+            <template x-for="d in dayGroups" :key="d.id">
+              <option :value="d.id" x-text="d.name + ' [' + (d.day_numbers||[]).join(',') + ']'"></option>
+            </template>
+          </select>
+        </label>
+        <div class="grid">
+          <template x-if="editingId"><button type="submit">保存</button></template>
+          <template x-if="!editingId"><button type="submit">创建</button></template>
+          <button type="button" class="secondary" @click="closeForm()">取消</button>
+        </div>
+      </form>
+    </article>
+  </dialog>
+
+  <table x-show="!loading">
+    <thead><tr>
+      <th @click="toggleSort('code')" style="cursor:pointer;">代码 <span x-show="sortBy==='code'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <th @click="toggleSort('name')" style="cursor:pointer;">名称 <span x-show="sortBy==='name'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <th @click="toggleSort('timespan')" style="cursor:pointer;">时段 <span x-show="sortBy==='timespan'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+            <th @click="toggleSort('dayGroup')" style="cursor:pointer;">日组 <span x-show="sortBy==='dayGroup'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <template x-if="isSuper"><th>租户</th></template>
+      <template x-if="canManage"><th>操作</th></template>
+    </tr></thead>
+    <tbody>
+      <template x-for="s in sortedItems" :key="s.id">
+        <tr>
+          <td x-text="s.code"></td>
+          <td x-text="s.name"></td>
+          <td x-text="s.start_time + '-' + s.end_time"></td>
+          <td x-text="dayGroupNames[s.day_group_id] || (s.day_group_id ? s.day_group_id.slice(0,8) : '')"></td>
+          <template x-if="isSuper"><td :title="s.tenant_id" x-text="s.tenant_name || s.tenant_id || '—'"></td></template>
+          <template x-if="canManage"><td style="white-space:nowrap;">
+            <button class="secondary outline" @click="edit(s)" style="padding:0.1rem 0.5rem;">编辑</button>
+            <button class="secondary outline" @click="del(s.id)" style="padding:0.1rem 0.5rem;">删除</button>
+          </td></template>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <div x-show="!loading && items.length > 0" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem;">
+    <small style="opacity:0.7;" x-text="'已显示 ' + items.length + ' / 共 ' + total + ' 个班次模板'"></small>
+    <button x-show="hasMore" class="outline" style="padding:0.2rem 0.7rem;" @click="loadMore()" :disabled="loadingMore" x-text="loadingMore ? '加载中…' : '加载更多'"></button>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+<h3 style="margin-top:2rem;">日组</h3>
+<div x-data="dg()" x-init="load()">
+  <button x-show="canManage" class="secondary" :disabled="!canCreateTarget && !editingId" @click="show=!show" x-text="show ? '取消' : '新增日组'"></button>
+  <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建日组前请先在上方选择租户</small>
+  <dialog :open="show" x-show="show" style="display:none;">
+    <article>
+      <h3 x-text="editingId ? '编辑日组' : '新增日组'"></h3>
+      <form @submit.prevent="submit()">
+        <label>名称 <input x-model="form.name" required></label>
+        <label>说明 <input x-model="form.description" placeholder="可选"></label>
+        <label>天数（逗号分隔，1=周一…7=周日） <input x-model="form.day_numbers_str" placeholder="1,2,3,4,5" required></label>
+        <div class="grid">
+          <button type="submit" x-text="editingId ? '保存' : '创建'"></button>
+          <button type="button" class="secondary" @click="closeForm()">取消</button>
+        </div>
+      </form>
+    </article>
+  </dialog>
+  <table x-show="!loading" style="margin-top:0.5rem;">
+    <thead><tr>
+      <th @click="toggleSort('name')" style="cursor:pointer;">名称 <span x-show="sortBy==='name'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <th @click="toggleSort('days')" style="cursor:pointer;">天数 <span x-show="sortBy==='days'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <template x-if="isSuper"><th>租户</th></template>
+      <template x-if="canManage"><th>操作</th></template>
+    </tr></thead>
+    <tbody>
+      <template x-for="d in sortedDgItems" :key="d.id">
+        <tr><td x-text="d.name"></td><td x-text="(d.day_numbers||[]).join(',')"></td>
+        <template x-if="isSuper"><td :title="d.tenant_id" x-text="d.tenant_name || d.tenant_id || '—'"></td></template>
+        <template x-if="canManage"><td>
+          <button class="secondary outline" @click="edit(d)" style="padding:0.1rem 0.5rem;">编辑</button>
+          <button class="secondary outline" @click="del(d.id)" style="padding:0.1rem 0.5rem;">删除</button>
+        </td></template></tr>
+      </template>
+    </tbody>
+  </table>
+  <div x-show="!loading && items.length > 0" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem;">
+    <small style="opacity:0.7;" x-text="'已显示 ' + items.length + ' / 共 ' + total + ' 个日组'"></small>
+    <button x-show="hasMore" class="outline" style="padding:0.2rem 0.7rem;" @click="loadMore()" :disabled="loadingMore" x-text="loadingMore ? '加载中…' : '加载更多'"></button>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+{% endblock %}

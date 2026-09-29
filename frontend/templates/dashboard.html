@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}仪表盘 · {{ app_name }}{% endblock %}
+{% block content %}
+<h2>仪表盘</h2>
+<p>选择左侧导航开始。常用入口：</p>
+<ul>
+  <li><a href="/pages/nurses">管理护士</a></li>
+  <li><a href="/pages/shifts">管理班次模板</a></li>
+  <li><a href="/pages/rules">配置规则（技能组合 / 班次序列）</a></li>
+  {% if user_role != 'nurse' %}
+  <li><a href="/pages/generate">生成排班</a></li>
+  {% endif %}
+  <li><a href="/pages/schedules">查看历史排班</a></li>
+</ul>
+{% endblock %}

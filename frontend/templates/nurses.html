@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}护士 · {{ app_name }}{% endblock %}
+{% block content %}
+<div x-data="nursesPage()" x-init="load()">
+  <h2>护士</h2>
+
+  <div style="display:flex; flex-direction:column; align-items:flex-start; gap:.5rem;">
+    <template x-if="isSuper">
+      <label>租户
+        <select x-model="tenantId" @change="reloadForTenant()">
+          <option value="">全部租户（跨租户浏览）</option>
+          <template x-for="tenant in tenants" :key="tenant.id">
+            <option :value="tenant.id" :selected="tenant.id === tenantId" x-text="tenant.name"></option>
+          </template>
+        </select>
+      </label>
+    </template>
+    <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+      <button x-show="canManage" :disabled="!canCreateTarget" @click="loadRoles(true); loadSkills(true); showForm = !showForm" class="secondary" x-text="showForm ? '取消' : '新增护士'">
+      </button>
+      <small x-show="canManage && !canCreateTarget" style="opacity:0.7;">创建护士前请选择租户</small>
+      <small x-show="sub && sub.is_active" style="opacity:0.7;">
+        套餐最多 <span x-text="planLimitText"></span> 名护士（当前 <span x-text="items.length"></span>）
+      </small>
+    </div>
+  </div>
+
+  <dialog :open="showForm" x-show="showForm" style="display:none;">
+    <article>
+      <h3 x-text="form.id ? '编辑护士' : '新增护士'"></h3>
+        <form @submit.prevent="canCreateTarget && createOrUpdateNurse()">
+        <input type="hidden" x-model="form.id">
+        <label>工号 <input x-model="form.employee_id" required></label>
+        <label>名 <input x-model="form.first_name" required></label>
+        <label>姓 <input x-model="form.last_name" required></label>
+        <label>科室/部门
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; align-items:start;">
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">已选科室/部门</strong>
+              <div style="height:10rem; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:var(--pico-border-radius); background:var(--pico-primary-background);">
+                <div x-show="form.department" @click="form.department=''" style="display:flex; justify-content:space-between; align-items:center; padding:0.35rem 0.75rem; cursor:pointer; border-bottom:1px solid var(--pico-muted-border-color);">
+                  <span x-text="form.department || ''"></span>
+                  <span style="color:crimson; font-weight:bold;">×</span>
+                </div>
+                <div x-show="!form.department" style="padding:0.35rem 0.75rem; color:var(--pico-muted-color); font-size:0.85rem;">无</div>
+              </div>
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">点击可取消选择</small>
+            </div>
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">科室/部门列表</strong>
+              <div style="height:10rem; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:var(--pico-border-radius); background:var(--pico-primary-background);">
+                <template x-for="d in departments" :key="d">
+                  <div @click="form.department = d" style="display:flex; justify-content:space-between; align-items:center; padding:0.35rem 0.75rem; cursor:pointer; border-bottom:1px solid var(--pico-muted-border-color);">
+                    <span x-text="d"></span>
+                    <span x-show="form.department === d" style="color:var(--pico-primary); font-weight:bold;">✓</span>
+                  </div>
+                </template>
+                <div x-show="departments.length===0" style="padding:0.35rem 0.75rem; color:var(--pico-muted-color); font-size:0.85rem;">无</div>
+              </div>
+              <input x-model="form.department" placeholder="输入新科室/部门" maxlength="100" style="margin-top:0.5rem; width:100%;">
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">从列表选择或手动输入</small>
+              <template x-if="canManage && departments.length > 0">
+                <div style="margin-top:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+                  <select x-model="deptToDelete" style="flex:1; padding:0.2rem;">
+                    <option value="">选择要删除的科室…</option>
+                    <template x-for="d in departments" :key="d">
+                      <option :value="d" x-text="d"></option>
+                    </template>
+                  </select>
+                  <button type="button" class="secondary outline" @click="if(deptToDelete){removeDepartment(deptToDelete); deptToDelete='';}" :disabled="!deptToDelete" style="padding:0.15rem 0.5rem; color:crimson; white-space:nowrap;">删除科室</button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </label>
+
+        <label>角色
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; align-items:start;">
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">已选角色</strong>
+              <div style="height:10rem; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:var(--pico-border-radius); background:var(--pico-primary-background);">
+                <template x-for="r in form.role_ids" :key="r">
+                  <div @click="form.role_ids = form.role_ids.filter(x => x !== r)"
+                       style="display:flex; justify-content:space-between; align-items:center; padding:0.35rem 0.75rem; cursor:pointer; border-bottom:1px solid var(--pico-muted-border-color);">
+                    <span x-text="roleLabel(r)"></span>
+                    <span style="color:crimson; font-weight:bold;">×</span>
+                  </div>
+                </template>
+                <div x-show="form.role_ids.length===0" style="padding:0.35rem 0.75rem; color:var(--pico-muted-color); font-size:0.85rem;">无</div>
+              </div>
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">点击行可取消选择</small>
+            </div>
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">角色列表</strong>
+              <select multiple style="height:10rem; width:100%;" size="8"
+                      @change="form.role_ids = Array.from($event.target.selectedOptions).map(o => o.value)">
+                <template x-for="r in availableRoles" :key="r.id">
+                  <option :value="r.id" :selected="form.role_ids.includes(r.id)" x-text="r.code + ' - ' + r.name"></option>
+                </template>
+              </select>
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">按住 Ctrl/Cmd 多选</small>
+            </div>
+          </div>
+        </label>
+
+        <label>技能
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; align-items:start;">
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">已选技能</strong>
+              <div style="height:10rem; overflow-y:auto; border:1px solid var(--pico-muted-border-color); border-radius:var(--pico-border-radius); background:var(--pico-primary-background);">
+                <template x-for="s in form.skill_ids" :key="s">
+                  <div @click="form.skill_ids = form.skill_ids.filter(x => x !== s)"
+                       style="display:flex; justify-content:space-between; align-items:center; padding:0.35rem 0.75rem; cursor:pointer; border-bottom:1px solid var(--pico-muted-border-color);">
+                    <span x-text="skillLabel(s)"></span>
+                    <span style="color:crimson; font-weight:bold;">×</span>
+                  </div>
+                </template>
+                <div x-show="form.skill_ids.length===0" style="padding:0.35rem 0.75rem; color:var(--pico-muted-color); font-size:0.85rem;">无</div>
+              </div>
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">点击行可取消选择</small>
+            </div>
+            <div>
+              <strong style="display:block; margin-bottom:0.5rem; font-size:0.85rem; color:var(--pico-muted-color);">技能列表</strong>
+              <select multiple style="height:10rem; width:100%;" size="8"
+                      @change="form.skill_ids = Array.from($event.target.selectedOptions).map(o => o.value)">
+                <template x-for="s in availableSkills" :key="s.id">
+                  <option :value="s.id" :selected="form.skill_ids.includes(s.id)" x-text="s.code + ' - ' + s.name"></option>
+                </template>
+              </select>
+              <small style="color:var(--pico-muted-color); display:block; margin-top:0.25rem;">按住 Ctrl/Cmd 多选</small>
+            </div>
+          </div>
+        </label>
+        <details x-show="canManage" style="margin-top:0.5rem;">
+          <summary style="cursor:pointer; font-weight:600;">排班约束</summary>
+          <div style="margin-top:0.5rem; display:grid; gap:0.5rem;">
+            <label><input type="checkbox" :checked="form.contract !== null" @change="toggleContract($event.target.checked)"> 启用排班约束</label>
+            <template x-if="form.contract">
+              <div style="display:grid; gap:0.5rem;">
+                <div class="grid" style="grid-template-columns:1fr 1fr;">
+                  <label>每周期班次目标
+                    <input type="number" min="0" x-model.number="form.contract.shifts_per_period">
+                  </label>
+                  <label>每周期最多班次 <small style="opacity:0.7;">(留空不限制)</small>
+                    <input type="number" min="0" x-model.number="form.contract.max_shifts_per_period" placeholder="不限制">
+                  </label>
+                </div>
+                <div class="grid" style="grid-template-columns:1fr 1fr;">
+                  <label>最低休息时间(小时)
+                    <input type="number" min="0" x-model.number="form.contract.min_rest_hours">
+                  </label>
+                  <label>最多连续工作天数
+                    <input type="number" min="1" x-model.number="form.contract.max_consecutive_days">
+                  </label>
+                </div>
+                <fieldset>
+                  <legend style="font-size:0.85rem;">约束开关</legend>
+                  <label><input type="checkbox" :checked="form.contract.enforce_balanced" @change="form.contract.enforce_balanced = $event.target.checked"> 前半/后半周期班次均衡</label>
+                  <label><input type="checkbox" :checked="form.contract.enforce_shifts_per_period" @change="form.contract.enforce_shifts_per_period = $event.target.checked"> 严格达到每周期班次目标</label>
+                  <label><input type="checkbox" :checked="form.contract.enforce_one_shift_per_day" @change="form.contract.enforce_one_shift_per_day = $event.target.checked"> 每天最多一个班次</label>
+                </fieldset>
+              </div>
+            </template>
+            <small style="opacity:0.7;">不启用时该护士排班不受约束。</small>
+          </div>
+        </details>
+        <label><input type="checkbox" :checked="form.is_available" @change="form.is_available = $event.target.checked"> 可排班</label>
+        <div class="grid"><button type="submit" :disabled="!canCreate" x-text="form.id ? '保存' : '创建'"></button><button type="button" class="secondary" @click="cancelNurseEdit()">取消</button></div>
+      </form>
+    </article>
+  </dialog>
+
+  <label style="max-width:220px;">按科室筛选
+    <select x-model="deptFilter" @change="loadNurses(true)">
+      <option value="">全部</option>
+      <template x-for="d in allDepartments" :key="d">
+        <option :value="d" x-text="d"></option>
+      </template>
+      <option :value="noDepartment">无科室/部门</option>
+    </select>
+  </label>
+
+  <div class="table-scroll">
+    <table x-show="!loading">
+      <thead><tr>
+        <th @click="toggleSort('employee_id')" style="cursor:pointer;">工号 <span x-show="sortBy==='employee_id'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+        <th @click="toggleSort('name')" style="cursor:pointer;">姓名 <span x-show="sortBy==='name'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+        <th @click="toggleSort('department')" style="cursor:pointer;">科室/部门 <span x-show="sortBy==='department'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+        <th @click="toggleSort('roles')" style="cursor:pointer;">角色 <span x-show="sortBy==='roles'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+        <th @click="toggleSort('skills')" style="cursor:pointer;">技能 <span x-show="sortBy==='skills'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+        <th>关联账号</th>
+        <template x-if="isSuper"><th>租户</th></template><th>可用</th><th>排班约束</th><template x-if="canManage"><th>操作</th></template>
+      </tr></thead>
+      <tbody>
+        <template x-for="n in filtered" :key="n.id">
+          <tr>
+            <td x-text="n.employee_id"></td>
+            <td x-text="n.last_name + ' ' + n.first_name"></td>
+            <td x-text="n.department || '—'"></td>
+            <td x-text="roleCodes(n)"></td>
+            <td x-text="skillCodes(n)"></td>
+            <td x-text="n.user_email || '—'"></td>
+            <template x-if="isSuper"><td :title="n.tenant_id" x-text="n.tenant_name || n.tenant_id || '—'"></td></template>
+            <td x-text="n.is_available ? '✓' : '✗'"></td>
+            <td style="font-size:0.8em;">
+              <template x-if="n.contract">
+                <span x-text="(n.contract.shifts_per_period||0)+'班/' + (n.contract.min_rest_hours||0)+'h休/' + (n.contract.max_consecutive_days||0)+'连'"></span>
+              </template>
+              <template x-if="!n.contract"><span style="opacity:0.5;">无限制</span></template>
+            </td>
+            <template x-if="canManage"><td>
+              <button class="secondary outline" @click="editNurse(n)" style="padding:0.1rem 0.5rem; font-size:0.85em;">编辑</button>
+              <button class="secondary outline" @click="del(n.id)" style="padding:0.1rem 0.5rem;margin-left:0.25rem; font-size:0.85em;">删除</button>
+            </td></template>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <p x-show="loading">加载中…</p>
+  <p x-show="!loading && items.length===0">暂无护士。</p>
+  <div x-show="!loading && items.length > 0" style="display:flex; align-items:center; gap:0.75rem; margin-top:0.5rem;">
+    <small style="opacity:0.7;">
+      已显示 <span x-text="filtered.length"></span> / 共 <span x-text="nurseTotal"></span> 名护士
+    </small>
+    <button x-show="hasMoreNurses" class="outline" style="padding:0.2rem 0.8rem;"
+            @click="loadMoreNurses()" :disabled="nurseLoadingMore"
+            x-text="nurseLoadingMore ? '加载中…' : '加载更多'">
+    </button>
+  </div>
+</div>
+
+{% endblock %}

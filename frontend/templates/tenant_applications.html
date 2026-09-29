@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}租户申请 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="tenantApplicationsPage()" x-init="load()">
+  <h2>租户申请 <small style="font-size:0.6em;opacity:0.6;">超级管理员</small></h2>
+
+  <div class="auto-approve-panel" style="margin-bottom:1rem; padding:0.75rem 1rem; border:1px solid var(--pico-muted-border-color); border-radius:0.5rem; background:var(--pico-card-background-color);">
+    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+      <span style="display:inline-flex; align-items:center; gap:0.3rem;">
+        <input type="checkbox" role="switch" x-model="autoApprove" @change="saveAutoApprove()" :disabled="autoApproveSaving">
+        <strong>自动审批</strong>
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:0.3rem;">
+        套餐
+        <select style="width:auto; margin:0; padding:0.25rem 1.25rem 0.25rem 0.5rem; font-size:0.85rem; line-height:1.2; height:auto;" x-model="autoPlan" @change="saveAutoApprove()" :disabled="autoApproveSaving || !autoApprove">
+          <option value="free">Free</option>
+          <option value="pro">Pro (14天试用)</option>
+        </select>
+      </span>
+      <small x-show="autoApprove" style="opacity:0.7;">开启后，邮箱验证通过即自动创建租户，无需人工审核</small>
+    </div>
+    <p x-show="autoApproveNotice" style="color:#2a9d8f; margin:0.5rem 0 0;" x-text="autoApproveNotice"></p>
+    <p x-show="autoApproveError" style="color:crimson; margin:0.5rem 0 0;" x-text="autoApproveError"></p>
+  </div>
+
+  <p x-show="!autoApprove">审核已验证邮箱的申请。批准后会创建租户、首位管理员和 14 天 Pro 试用。</p>
+  <p x-show="autoApprove" style="color:#2a9d8f;">自动审批已开启。申请邮箱验证通过后会自动创建租户并开通 <strong x-text="autoPlan === 'pro' ? 'Pro (14天试用)' : 'Free'"></strong> 套餐。</p>
+
+  <div class="detail-toolbar" style="margin-bottom:0.75rem;">
+    <div class="application-filters">
+      <label style="margin:0;">
+        状态
+        <select x-model="filter.status" @change="load()">
+          <option value="">全部</option>
+          <option value="pending_email_verification">待邮箱验证</option>
+          <option value="pending_review">待审核</option>
+          <option value="approved">已批准</option>
+          <option value="rejected">已拒绝</option>
+          <option value="expired">已过期</option>
+        </select>
+      </label>
+      <button type="button" class="secondary" @click="load()">刷新</button>
+    </div>
+    <div class="detail-actions">
+      <button type="button" class="outline" @click="previousPage()" :disabled="filter.page <= 1">上一页</button>
+      <span x-text="pageLabel()"></span>
+      <button type="button" class="outline" @click="nextPage()" :disabled="!hasNextPage()">下一页</button>
+    </div>
+  </div>
+
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="notice" style="color:#2a9d8f;" x-text="notice"></p>
+
+  <div :class="selected ? 'grid application-review-layout' : ''">
+    <div class="table-scroll" style="max-height:none;">
+      <table>
+        <thead>
+          <tr>
+            <th>组织</th><th>联系人</th><th>状态</th><th>提交时间</th><th>验证时间</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="row in rows" :key="row.id">
+            <tr :class="selected && selected.id === row.id ? 'selected-row' : ''">
+              <td><button type="button" class="outline" style="padding:0.2rem 0.5rem;" @click="select(row)" x-text="row.organization_name"></button></td>
+              <td x-text="row.contact_name"></td>
+              <td><span class="tag" :class="statusClass(row.status)" x-text="statusText(row.status)"></span></td>
+              <td x-text="formatTime(row.created_at)"></td>
+              <td x-text="formatTime(row.verified_at)"></td>
+              <td>
+                <button type="button" class="outline" style="padding:0.2rem 0.5rem;" @click="select(row)">详情</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <article x-show="selected">
+      <h3 x-text="selected ? selected.organization_name : ''"></h3>
+      <dl class="application-detail">
+        <div><dt>状态</dt><dd x-text="statusText(selected?.status)"></dd></div>
+        <div><dt>联系邮箱</dt><dd x-text="selected?.contact_email"></dd></div>
+        <div><dt>国家/地区</dt><dd x-text="selected?.country"></dd></div>
+        <div><dt>时区</dt><dd x-text="selected?.timezone"></dd></div>
+        <div><dt>预计护士数</dt><dd x-text="selected?.expected_nurse_count"></dd></div>
+        <div><dt>审核人</dt><dd x-text="selected?.reviewed_by_user_id || '—'"></dd></div>
+        <div><dt>租户</dt><dd><code x-text="selected?.created_tenant_id || '—'"></code></dd></div>
+        <div><dt>管理员</dt><dd><code x-text="selected?.created_user_id || '—'"></code></dd></div>
+      </dl>
+      <label>使用场景
+        <textarea readonly rows="5" x-text="selected?.use_case_summary"></textarea>
+      </label>
+      <label>审核备注
+        <textarea x-model="reviewNotes" rows="3" maxlength="2000" :disabled="!canReview()"></textarea>
+      </label>
+      <label>拒绝理由
+        <textarea x-model="rejectReason" rows="3" maxlength="1000" :disabled="!canReview()"></textarea>
+      </label>
+      <p x-show="selected && actionHint()" style="margin:0.4rem 0; opacity:0.75;" x-text="actionHint()"></p>
+      <div class="detail-actions" style="justify-content:flex-start;">
+        <button type="button" @click="approve()" :disabled="!canReview()">批准并开通</button>
+        <button type="button" class="secondary" @click="reject()" :disabled="!canReview()">拒绝</button>
+        <button type="button" class="outline" @click="resendInvitation()" :disabled="!canResend()">重发邀请</button>
+      </div>
+    </article>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+<script src="/static/js/tenant_applications.js"></script>
+{% endblock %}

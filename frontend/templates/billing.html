@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}账单管理 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="billingPage()" x-init="load()">
+  <h2>账单管理 <small style="font-size:0.6em;opacity:0.6;">超级管理员</small></h2>
+  <p>登记人工或 Stripe 账单，跟踪 issued → paid / void 生命周期。这里不保存任何支付方式数据。</p>
+
+  <div class="filter-bar">
+    <label>租户
+      <select x-model="tenantFilter" @change="load()">
+        <option value="">全部租户</option>
+        <template x-for="tenant in tenants" :key="tenant.id">
+          <option :value="tenant.id" x-text="tenant.name"></option>
+        </template>
+      </select>
+    </label>
+    <label>状态
+      <select x-model="statusFilter" @change="load()">
+        <option value="">全部</option>
+        <option value="issued">待付款</option>
+        <option value="paid">已付款</option>
+        <option value="void">已作废</option>
+      </select>
+    </label>
+    <label>来源
+      <select x-model="providerFilter" @change="load()">
+        <option value="">全部</option>
+        <option value="manual">人工</option>
+        <option value="stripe">Stripe</option>
+      </select>
+    </label>
+    <button class="outline" @click="showCreate=!showCreate" x-text="showCreate ? '取消登记' : '登记账单'"></button>
+  </div>
+
+  <article x-show="showCreate" style="margin-top:0.75rem;">
+    <form @submit.prevent="create()">
+      <div class="grid">
+        <label>租户
+          <select x-model="formTenant" required>
+            <option value="" disabled>选择租户</option>
+            <template x-for="tenant in tenants" :key="tenant.id">
+              <option :value="tenant.id" x-text="tenant.name"></option>
+            </template>
+          </select>
+        </label>
+        <label>账单编号
+          <input x-model="formNumber" required maxlength="40" pattern="[A-Za-z0-9._:-]+" placeholder="INV-2026-0001">
+        </label>
+        <label>金额（最小货币单位）
+          <input type="number" x-model.number="formAmountMinor" required min="1" max="100000000000">
+        </label>
+        <label>币种
+          <input x-model="formCurrency" required maxlength="3" minlength="3" style="text-transform:uppercase;">
+        </label>
+        <label>状态
+          <select x-model="formStatus">
+            <option value="issued">待付款</option>
+            <option value="paid">已付款</option>
+          </select>
+        </label>
+        <label>来源
+          <select x-model="formProvider">
+            <option value="manual">人工</option>
+            <option value="stripe">Stripe</option>
+          </select>
+        </label>
+        <label x-show="formProvider === 'stripe'">Stripe invoice ID
+          <input x-model="formProviderInvoice" :required="formProvider === 'stripe'" maxlength="100">
+        </label>
+        <label>账期开始
+          <input type="date" x-model="formPeriodStart" required>
+        </label>
+        <label>账期结束
+          <input type="date" x-model="formPeriodEnd" required>
+        </label>
+        <label>到期日
+          <input type="date" x-model="formDueAt">
+        </label>
+      </div>
+      <label>备注
+        <textarea x-model="formNotes" rows="2" maxlength="2000"></textarea>
+      </label>
+      <button type="submit" :disabled="saving">保存账单</button>
+    </form>
+  </article>
+
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="notice" style="color:#2a9d8f;" x-text="notice"></p>
+
+  <div style="overflow-x:auto;">
+    <table x-show="!loading">
+      <thead>
+        <tr>
+          <th>编号</th><th>租户</th><th>金额</th><th>状态</th><th>来源</th>
+          <th>账期</th><th>到期</th><th>付款时间</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="invoice in invoices" :key="invoice.id">
+          <tr>
+            <td><code x-text="invoice.number"></code></td>
+            <td x-text="invoice.tenant_name"></td>
+            <td x-text="invoice.amount_display"></td>
+            <td><span class="tag" :class="invoice.status_class" x-text="invoice.status_label"></span></td>
+            <td x-text="invoice.provider === 'stripe' ? 'Stripe' : '人工'"></td>
+            <td x-text="invoice.period_display"></td>
+            <td x-text="invoice.due_display"></td>
+            <td x-text="invoice.paid_display"></td>
+            <td>
+              <template x-if="invoice.status === 'issued'">
+                <div style="display:flex; gap:0.3rem;">
+                  <button class="outline" style="padding:0.2rem 0.6rem;" @click="updateStatus(invoice, 'paid')">标记付款</button>
+                  <button class="outline" style="padding:0.2rem 0.6rem; color:crimson;" @click="updateStatus(invoice, 'void')">作废</button>
+                </div>
+              </template>
+              <template x-if="invoice.status !== 'issued'"><span>—</span></template>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <p x-show="loading">加载中…</p>
+</div>
+
+<script src="/static/js/billing.js"></script>
+{% endblock %}

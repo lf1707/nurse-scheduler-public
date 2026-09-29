@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+{% block title %}仿真管理 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="adm()" x-init="load()">
+  <h2>仿真管理 <small style="font-size:0.6em;opacity:0.6;">超级管理员</small></h2>
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+
+  <!-- Masquerade banner: shown only while impersonating -->
+  <div x-show="impersonating" style="margin-bottom:1rem; padding:0.6rem 1rem; background:#e9c46a33; border-left:4px solid #e9c46a;">
+    正在以 <strong x-text="impName"></strong> 身份仿真。下方页面将以该身份操作。
+    <button class="outline" style="margin-left:0.6rem;padding:0.2rem 0.6rem;" @click="exitImpersonate()">退出仿真</button>
+  </div>
+
+  <h3>模拟登录(Masquerade)</h3>
+  <p>选择一个租户与用户,以该用户身份进入系统做仿真测试。原登录态会被保留,点「退出仿真」恢复。</p>
+  <div class="grid" style="max-width:640px;">
+    <label>租户
+      <select x-model="selTenant" @change="loadUsers()">
+        <option value="">请选择…</option>
+        <template x-for="t in tenants" :key="t.id">
+          <option :value="t.id" x-text="t.name + ' (' + t.slug + ')'"></option>
+        </template>
+      </select>
+    </label>
+    <label>用户
+      <select x-model="selUser" :disabled="!selTenant">
+        <option value="">请选择…</option>
+        <template x-for="u in users" :key="u.id">
+          <option :value="u.id" x-text="u.email + ' [' + u.role + ']' + (u.is_active ? '' : '（未激活）')"></option>
+        </template>
+      </select>
+    </label>
+  </div>
+  <button :disabled="!selUser" @click="impersonate()" style="margin-top:0.6rem;">以该用户登录</button>
+  <p x-show="impMsg" x-text="impMsg" style="margin-top:0.4rem;"></p>
+
+  <hr>
+  <div style="display:flex; align-items:center; gap:0.75rem; margin-top:1rem;">
+    <label style="margin:0; display:flex; align-items:center; gap:0.4rem;">
+      <input type="checkbox" x-model="testTenantsEnabled" @change="toggleTestTenants()">
+      启用仿真测试
+    </label>
+    <span x-show="switchMsg" x-text="switchMsg" style="opacity:0.75;"></span>
+  </div>
+  <div x-show="testTenantsEnabled">
+    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+      <h3 style="margin:0; margin-right:auto;">一键测试租户</h3>
+      <span x-show="demoEnabled" style="display:flex; align-items:center;">
+        <button type="button" :disabled="demoCreating" @click="createDemoTenant()" style="padding:0.3rem 0.8rem;">
+          <span x-show="!demoCreating">创建 / 修复 Demo 租户</span>
+          <span x-show="demoCreating">处理中…</span>
+        </button>
+      </span>
+      <button type="button" :disabled="cleanupLoading" @click="cleanupTestData()" style="padding:0.3rem 0.8rem;">
+        <span x-show="!cleanupLoading">清理测试数据</span>
+        <span x-show="cleanupLoading">清理中…</span>
+      </button>
+      <span x-show="demoMsg" x-text="demoMsg" style="flex-basis:100%;font-size:0.85em;"></span>
+    </div>
+    <small style="display:block;width:100%;margin-top:0.25rem;opacity:0.7;" x-text="planLimits ? ('Demo 租户固定使用 demo 套餐（' + planLimitSummary.demo + '），套餐归属不可更改。') : 'Demo 租户固定使用 demo 套餐，套餐归属不可更改。'"></small>
+    <p x-show="cleanupMsg" x-text="cleanupMsg" style="margin:0.4rem 0 0;"></p>
+    <p>按需配置临时租户的种子数据规模，用于端到端仿真。系统会自动推导可行的班次人员配比。租户删除和状态管理统一在租户管理界面处理。</p>
+    <form hx-boost="false" @submit.prevent="createTest()">
+    <div style="display:flex; gap:0.75rem; align-items:flex-end;">
+      <label style="flex:1;">护士人数
+        <input type="number" x-model.number="createForm.nurse_count" min="1" max="200" required>
+      </label>
+      <label style="flex:1;">角色数量
+        <input type="number" x-model.number="createForm.role_count" min="1" :max="createForm.nurse_count" required>
+      </label>
+      <label style="flex:1;">日组数量
+        <input type="number" x-model.number="createForm.day_group_count" min="1" max="7" required>
+      </label>
+      <label style="flex:1;">班次数量
+        <input type="number" x-model.number="createForm.shift_count" min="1" max="24" required>
+      </label>
+      <label style="flex:1;">每班次配比规则
+        <input type="number" x-model.number="createForm.skill_mix_rule_count" min="1" max="3" required>
+      </label>
+      <label style="flex:1;">连续班次规则
+        <input type="number" x-model.number="createForm.shift_sequence_rule_count" min="0" max="5" required>
+      </label>
+      <label style="flex:1.2;">套餐
+        <select x-model="createForm.plan">
+          <template x-for="plan in planOptions" :key="plan">
+            <option :value="plan" x-text="planLabel(plan)"></option>
+          </template>
+        </select>
+      </label>
+    </div>
+    <button type="submit" style="margin-top:0.75rem;">创建测试租户</button>
+    </form>
+    <span x-show="createMsg" x-text="createMsg" style="margin-left:0.6rem;"></span>
+
+    <article style="margin-top:1.5rem;">
+    <h3>套餐编辑</h3>
+      <p style="font-size:0.85em;opacity:0.7;">
+        配置各套餐允许的护士数量和排班周期。勾选“不限”保存空值，新限额立即影响后端校验和前端提示。
+      </p>
+      <div style="overflow-x:auto;">
+        <table style="margin-top:0.5rem;">
+          <thead>
+            <tr><th>套餐</th><th>最多护士</th><th>不限护士</th><th>排班周期（天）</th><th>不限周期</th><th></th></tr>
+          </thead>
+          <tbody>
+            <template x-for="plan in systemPlanKeys" :key="plan">
+              <tr>
+                <td x-text="plan"></td>
+                <td>
+                  <input type="number" min="0" max="10000" style="margin-bottom:0;"
+                         :disabled="planLimits[plan].max_nurses === null"
+                         x-model.number="planLimits[plan].max_nurses">
+                </td>
+                <td>
+                  <input type="checkbox" style="margin-bottom:0;"
+                         :checked="planLimits[plan].max_nurses === null"
+                         @change="toggleNurseUnlimited(plan)">
+                </td>
+                <td>
+                  <input type="number" min="1" max="3650" style="margin-bottom:0;"
+                         :disabled="planLimits[plan].max_period_days === null"
+                         x-model.number="planLimits[plan].max_period_days">
+                </td>
+                <td>
+                  <input type="checkbox" style="margin-bottom:0;"
+                         :checked="planLimits[plan].max_period_days === null"
+                         @change="togglePeriodUnlimited(plan)">
+                </td>
+                <td><button type="button" class="outline" @click="removeSystemPlan(plan)">删除</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex; align-items:center; gap:0.75rem; margin-top:0.75rem;">
+        <button type="button" class="outline" :disabled="planLimitsSaving" @click="savePlanLimits()"
+                :disabled="planLimitsSaving || !planLimitsDirty"
+                x-text="planLimitsSaving ? '保存中…' : '保存'"></button>
+        <button type="button" class="outline" :disabled="planLimitsSaving" @click="addCustomPlan()">新增套餐</button>
+        <span x-show="planLimitsMsg" x-text="planLimitsMsg" style="font-size:0.85em;"></span>
+      </div>
+      <h4 style="margin:1.25rem 0 0.5rem;">自定义套餐</h4>
+      <div style="overflow-x:auto;">
+        <table x-show="planLimits.custom.length" style="margin-top:0;">
+          <thead>
+            <tr><th>Key</th><th>名称</th><th>最多护士</th><th>不限护士</th><th>排班周期（天）</th><th>不限周期</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="(plan, index) in planLimits.custom" :key="index">
+              <tr>
+                <td><input x-model="plan.key" :disabled="!plan._isNew" maxlength="30" pattern="[a-z][a-z0-9_-]*" required></td>
+                <td><input x-model="plan.name" maxlength="30" required></td>
+                <td>
+                  <input type="number" min="0" max="10000" style="margin-bottom:0;" :disabled="plan.max_nurses === null" x-model.number="plan.max_nurses">
+                </td>
+                <td><input type="checkbox" style="margin-bottom:0;" :checked="plan.max_nurses === null" @change="toggleCustomNurseUnlimited(plan)"></td>
+                <td>
+                  <input type="number" min="1" max="3650" style="margin-bottom:0;" :disabled="plan.max_period_days === null" x-model.number="plan.max_period_days">
+                </td>
+                <td><input type="checkbox" style="margin-bottom:0;" :checked="plan.max_period_days === null" @change="toggleCustomPeriodUnlimited(plan)"></td>
+                <td style="display:flex; gap:0.4rem;">
+                  <template x-if="plan._isNew">
+                    <div style="display:flex; gap:0.4rem;">
+                      <button type="button" class="outline" :disabled="planLimitsSaving" @click="confirmCustomPlan(plan)">确定</button>
+                      <button type="button" class="outline" :disabled="planLimitsSaving" @click="removeCustomPlan(index)">取消</button>
+                    </div>
+                  </template>
+                  <template x-if="!plan._isNew">
+                    <button type="button" class="outline" :disabled="planLimitsSaving" @click="removeCustomPlan(index)">删除</button>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="deletedSystemPlans.length" style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.5rem;">
+        <template x-for="plan in deletedSystemPlans" :key="plan">
+          <button type="button" class="outline" @click="restoreSystemPlan(plan)">
+            恢复内置套餐 <span x-text="plan"></span>
+          </button>
+        </template>
+      </div>
+      <p style="font-size:0.82em;opacity:0.7;">Key 保存后不可修改；套餐被任一租户使用时不能删除。删除内置套餐后可点上方按钮恢复默认配置。</p>
+    </article>
+
+    <table x-show="testTenants.length" style="margin-top:1rem;">
+    <thead>
+      <tr>
+        <th>租户</th><th>类型</th><th>slug</th><th>创建时间</th><th>管理员邮箱</th><th>密码</th>
+        <th>护士</th><th>角色</th><th>技能</th><th>日组</th><th>班次</th><th>配比规则</th><th>连续规则</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <template x-for="t in testTenants" :key="t.tenant_id">
+        <tr>
+          <td x-text="t.tenant_name"></td>
+          <td><span class="tag" x-text="t.tenant_kind === 'demo' ? 'Demo' : '测试'"></span></td>
+          <td x-text="t.slug"></td>
+          <td x-text="(t.created_at || '').slice(0, 19).replace('T', ' ')"></td>
+          <td x-text="t.admin_email"></td>
+          <td x-text="t.password_source === 'environment_variable:DEMO_TENANT_PASSWORD' ? '由环境变量 DEMO_TENANT_PASSWORD 配置' : (t.admin_password || '创建时一次性返回')"></td>
+          <td x-text="t.nurse_count"></td>
+          <td x-text="t.role_count"></td>
+          <td x-text="t.skill_count"></td>
+          <td x-text="t.day_group_count"></td>
+          <td x-text="t.shift_count"></td>
+          <td x-text="t.skill_mix_rule_count"></td>
+          <td x-text="t.shift_sequence_rule_count"></td>
+          <td>
+            <button class="outline" style="padding:0.15rem 0.5rem;" @click="loginTest(t)">登录该租户</button>
+          </td>
+        </tr>
+      </template>
+    </tbody>
+    </table>
+  </div>
+  <p x-show="testSwitchLoaded && !testTenantsEnabled" style="margin-top:0.75rem; opacity:0.75;">
+    仿真测试已关闭；开启后超级管理员可创建和查看测试租户。
+  </p>
+
+  <hr>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+    <h3 style="margin:1rem 0 0.5rem;">归档与磁盘状态</h3>
+    <button class="outline" style="padding:0.25rem 0.7rem;" :disabled="opsLoading" @click="loadOpsStatus()">
+      <span x-show="!opsLoading">刷新状态</span>
+      <span x-show="opsLoading">加载中…</span>
+    </button>
+  </div>
+  <div class="grid" x-show="opsStatus" style="margin-top:0.5rem;">
+    <div>
+      <strong>审计归档</strong>
+      <p style="margin:0.4rem 0;">
+        状态：<span class="tag" x-text="opsStatus?.audit_export?.status || '-'"></span><br>
+        热保留：<span x-text="opsStatus ? opsStatus.audit_export.hot_retention_days + ' 天' : '-'"></span> ·
+        冷保留：<span x-text="opsStatus ? opsStatus.audit_export.cold_retention_days + ' 天' : '-'"></span><br>
+        最近导出：<span x-text="formatTime(opsStatus?.audit_export?.last_exported_at)"></span><br>
+        记录数：<span x-text="opsStatus?.audit_export?.event_count ?? '-'"></span><br>
+        归档文件：<span x-text="opsStatus?.audit_export?.artifact_name || '-'"></span><br>
+        本地文件：<span x-text="opsStatus?.audit_export?.artifact_exists ? '存在' : '缺失'"></span> ·
+        Off-host：<span x-text="opsStatus?.audit_export?.upload_confirmed ? '已确认' : '未确认'"></span>
+      </p>
+      <button style="padding:0.3rem 0.8rem;" :disabled="auditExportLoading || (auditTaskStatus && !auditTaskStatus.ready)" @click="runAuditExport()">
+        <span x-show="!auditExportLoading">立即压缩归档</span>
+        <span x-show="auditExportLoading">提交中…</span>
+      </button>
+      <button class="outline" style="padding:0.3rem 0.8rem; margin-left:0.5rem;" :disabled="auditRetentionLoading" @click="runAuditRetention()">
+        <span x-show="!auditRetentionLoading">运行保留清理</span>
+        <span x-show="auditRetentionLoading">提交中…</span>
+      </button>
+      <p x-show="auditExportMsg" style="margin:0.4rem 0 0; font-size:0.9em;" x-text="auditExportMsg"></p>
+      <p x-show="auditRetentionMsg" style="margin:0.4rem 0 0; font-size:0.9em;" x-text="auditRetentionMsg"></p>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div style="display:flex; align-items:center; gap:0.75rem;">
+        <h3 style="margin:0; margin-right:auto;">审计 Legal Hold</h3>
+        <button type="button" class="secondary" style="padding:0.3rem 0.8rem;"
+                @click="openLegalHoldForm()">新增 Legal Hold</button>
+      </div>
+      <p>阻止指定月份的审计分区被保留清理任务删除。下拉列表来自当前数据库的月度分区；重大调查或合规要求未关闭前不要解除。</p>
+      <dialog x-ref="legalHoldModal" @close="closeLegalHoldForm()"
+              @click="if (event.target === $refs.legalHoldModal) closeLegalHoldForm()"
+              aria-labelledby="legal-hold-title" data-testid="legal-hold-modal">
+        <article style="max-width:640px; margin:10vh auto; background:white; padding:1rem; border-radius:.5rem;">
+          <h3 id="legal-hold-title">新增 Legal Hold</h3>
+          <div style="display:grid; gap:0.6rem;">
+            <label>审计分区
+              <select @change="legalHoldForm.partition_name = $event.target.value; syncLegalHoldControls()"
+                      id="legal-hold-partition-select"
+                      x-ref="legalHoldPartitionSelect"
+                      disabled
+                      data-testid="legal-hold-partition-select">
+                <option value="">请选择分区…</option>
+              </select>
+            </label>
+            <label>保留原因
+              <textarea x-ref="legalHoldReason" rows="2" maxlength="2000"
+                        @input="legalHoldForm.reason = $event.target.value; syncLegalHoldControls()"
+                        placeholder="案件编号、调查范围或合规依据" required></textarea>
+            </label>
+            <div style="display:flex; gap:0.5rem;">
+              <button type="button" @click="createLegalHold()"
+                      id="legal-hold-submit" x-ref="legalHoldSubmit" disabled>创建</button>
+              <button type="button" class="secondary outline" @click="closeLegalHoldForm()">取消</button>
+            </div>
+          </div>
+        </article>
+      </dialog>
+      <p x-show="legalHoldMsg" style="margin:0.5rem 0 0; font-size:0.9em;" x-text="legalHoldMsg"></p>
+      <div style="overflow-x:auto; margin-top:0.8rem;">
+        <table style="width:100%; font-size:0.9em;">
+          <thead><tr><th>分区</th><th>原因</th><th>创建时间</th><th></th></tr></thead>
+          <tbody>
+            <tr x-show="legalHoldsLoading"><td colspan="4">加载中…</td></tr>
+            <tr x-show="!legalHoldsLoading && !legalHolds.length"><td colspan="4">当前没有 legal hold。</td></tr>
+            <template x-for="hold in legalHolds" :key="hold.id">
+              <tr>
+                <td><code x-text="hold.partition_name"></code></td>
+                <td x-text="hold.reason"></td>
+                <td x-text="formatTime(hold.created_at)"></td>
+                <td><button type="button" class="outline" @click="deleteLegalHold(hold)">解除</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <strong>磁盘使用</strong>
+      <p style="margin:0.4rem 0;">
+        级别：<span class="tag" x-text="opsStatus?.disk?.level || '-'"></span><br>
+        已用：<span x-text="opsStatus ? opsStatus.disk.used_percent + '%' : '-'"></span><br>
+        可用：<span x-text="opsStatus ? opsStatus.disk.free_gb + ' GiB' : '-'"></span><br>
+        路径：<span x-text="opsStatus?.disk?.path || '-'"></span><br>
+        阈值：<span x-text="opsStatus ? opsStatus.disk.warn_percent + '/' + opsStatus.disk.alert_percent + '/' + opsStatus.disk.critical_percent + '%' : '-'"></span><br>
+        检查时间：<span x-text="formatTime(opsStatus?.disk?.checked_at)"></span>
+      </p>
+    </div>
+  </div>
+
+  <article style="margin-top:1.5rem;">
+    <h3>Anomaly Scan 调度</h3>
+    <p style="font-size:0.85em;opacity:0.7;">
+      定期扫描近期安全审计事件，按 IP、操作者、动作等维度检测异常突发，例如登录失败激增、模拟登录滥用、超管高频操作、注册/申请异常和导出量突增。命中阈值后按配置记录 ERROR 日志或发送告警邮件；同一扫描窗口内相同规则会去重。设为 0 关闭定时扫描（仅手动触发），修改后需重启 beat 容器才能生效。
+    </p>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:0.75rem;">
+      <label style="flex:1;min-width:180px;">间隔（秒）
+        <input type="number" x-model.number="anomalyScanSchedule" min="0" style="margin-bottom:0;">
+      </label>
+      <button type="button" @click="runAnomalyScan()" :disabled="anomalyScanRunning || anomalyScanSaving || beatRestarting"
+              x-text="anomalyScanRunning ? '提交中…' : '现在开始扫描'"></button>
+      <button type="button" class="outline" @click="saveAnomalyScanSchedule()" :disabled="anomalyScanSaving || anomalyScanRunning || beatRestarting"
+              x-text="anomalyScanSaving ? '保存中…' : '保存'"></button>
+      <button type="button" class="outline" @click="restartBeat()" :disabled="beatRestarting || anomalyScanRunning || anomalyScanSaving"
+              x-text="beatRestarting ? '重启中…' : '重启 beat'"></button>
+    </div>
+    <div style="display:flex;align-items:flex-end;flex-wrap:wrap;gap:0.75rem;margin-top:0.75rem;">
+      <label style="flex:1;min-width:280px;">扫描任务 ID
+        <input type="text" x-model="anomalyTaskId" placeholder="粘贴 audit.anomaly_scan.triggered 里的 task_id" style="margin-bottom:0;">
+      </label>
+      <button type="button" class="outline" @click="queryAnomalyScanTask()" :disabled="anomalyTaskLoading || anomalyScanRunning"
+              x-text="anomalyTaskLoading ? '查询中…' : '查询任务状态'"></button>
+    </div>
+    <p style="margin:0.4rem 0 0;font-size:0.8em;opacity:0.7;">
+      任务状态由 Celery 结果后端保存；历史任务 ID 可在下方安全审计中筛选 <code>audit.anomaly_scan.triggered</code> 获取。
+    </p>
+    <span x-show="anomalyScanMsg" x-text="anomalyScanMsg" style="font-size:0.85em;"></span>
+    <p x-show="anomalyTaskStatus" style="margin:0.4rem 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.8em;">
+      任务 <span x-text="anomalyTaskStatus?.task_id"></span> ·
+      <span x-text="anomalyTaskStatus?.state"></span> ·
+      <span x-text="anomalyTaskStatus?.detail || '结果详情见上方提示'"></span>
+    </p>
+  </article>
+
+  <hr>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+    <h3 style="margin:1rem 0 0.5rem;">安全审计</h3>
+    <div style="display:flex; gap:0.5rem;">
+      <button class="outline" style="padding:0.25rem 0.7rem;" :disabled="auditLoading" @click="loadAuditEvents()">
+        <span x-show="!auditLoading">刷新</span>
+        <span x-show="auditLoading">加载中…</span>
+      </button>
+      <button class="outline" style="padding:0.25rem 0.7rem;" :disabled="auditDownloadLoading" @click="downloadAuditEvents()">
+        <span x-show="!auditDownloadLoading">下载 CSV</span>
+        <span x-show="auditDownloadLoading">生成中…</span>
+      </button>
+    </div>
+  </div>
+  <div style="overflow-x:auto;">
+    <table x-show="auditEvents.length" style="margin-top:0.5rem;">
+      <thead>
+        <tr>
+          <th>时间</th><th>动作</th><th>结果</th><th>操作者</th>
+          <th>影响租户</th><th>目标用户</th><th>IP</th><th>详情</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="event in auditEvents" :key="event.id">
+          <tr>
+            <td x-text="(event.created_at || '').slice(0, 19).replace('T', ' ')"></td>
+            <td x-text="event.action"></td>
+            <td><span class="tag" x-text="event.outcome"></span></td>
+            <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis;" x-text="event.actor_id || '-'"></td>
+            <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis;" x-text="event.tenant_id || '-'"></td>
+            <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis;" x-text="event.target_user_id || '-'"></td>
+            <td x-text="event.ip_address || '-'"></td>
+            <td style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="JSON.stringify(event.details || {})"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <p x-show="!auditLoading && !auditEvents.length" style="opacity:0.7;">暂无审计事件。</p>
+  <p style="font-size:0.88em; opacity:0.75; margin-top:0.75rem;">
+    记录不能在下载后立即删除。只有超过热保留期、归档校验通过且无 legal hold 的整月分区才会被清理。
+  </p>
+  <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.5rem;">
+    <button class="outline" style="padding:0.2rem 0.6rem;" :disabled="auditPage <= 1" @click="auditPage--; loadAuditEvents()">上一页</button>
+    <button class="outline" style="padding:0.2rem 0.6rem;" :disabled="auditPage * 50 >= auditTotal" @click="auditPage++; loadAuditEvents()">下一页</button>
+  </div>
+</div>
+
+<script src="/static/js/admin.js"></script>
+{% endblock %}

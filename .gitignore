@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.prod
+.env.dev.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Deploy secrets & TLS certs (never commit)
+deploy/certs/
+deploy/certbot-www/
+deploy/backups/
+backups/
+temp/
+ops-control/
+ops-state/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sqlite3
+*.db
+
+# Test artifacts
+.pytest_cache/
+.tox/
+.audit-requirements.txt
+pip-audit.json
+# Added by code-review-graph
+.code-review-graph/
+graphify-out/
+
+# Local agent / MCP config (contains proxy + local settings)
+.claude/
+.mcp.json

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}设置管理员密码 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<article style="max-width: 480px; margin: 4rem auto;">
+  <hgroup>
+    <h1>设置管理员密码</h1>
+    <h2>激活已审核通过的租户管理员帐号</h2>
+  </hgroup>
+  <form id="setup-form" hx-boost="false">
+    <label>新密码
+      <input type="password" id="password" autocomplete="new-password" required minlength="8" maxlength="128">
+    </label>
+    <label>确认新密码
+      <input type="password" id="password-confirm" autocomplete="new-password" required minlength="8" maxlength="128">
+    </label>
+    <button type="submit">激活帐号</button>
+  </form>
+  <p id="setup-error" role="alert" style="color:crimson; display:none;"></p>
+  <p id="setup-success" style="color:#2a9d8f; display:none;"></p>
+</article>
+
+<script src="/static/js/setup_admin.js"></script>
+{% endblock %}

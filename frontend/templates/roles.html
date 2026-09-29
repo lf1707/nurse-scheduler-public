@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}角色管理 · {{ app_name }}{% endblock %}
+{% block content %}
+<div x-data="rolesPage()" x-init="load()">
+  <h2>角色管理</h2>
+  <div style="display:flex; flex-direction:column; align-items:flex-start; gap:.5rem; margin-bottom:1rem;">
+    <template x-if="isSuper">
+      <label>租户
+        <select x-model="tenantId" @change="reloadForTenant()">
+          <option value="">全部租户（跨租户浏览）</option>
+          <template x-for="tenant in tenants" :key="tenant.id">
+            <option :value="tenant.id" :selected="tenant.id === tenantId" x-text="tenant.name"></option>
+          </template>
+        </select>
+      </label>
+    </template>
+    <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+      <button class="secondary" :disabled="!canCreateTarget" @click="showForm=!showForm" x-text="showForm ? '取消' : '新增角色'"></button>
+      <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建角色前请选择租户</small>
+    </div>
+  </div>
+
+  <dialog :open="showForm" x-show="showForm" style="display:none;">
+    <article>
+      <h3 x-text="editingRole ? '编辑角色' : '新增角色'"></h3>
+      <form @submit.prevent="saveRole()">
+        <input type="hidden" x-model="form.id">
+        <label>代码 <input x-model="form.code" required maxlength="20" placeholder="RN"></label>
+        <label>名称 <input x-model="form.name" required maxlength="50" placeholder="注册护士"></label>
+        <label>描述 <input x-model="form.description" maxlength="255" placeholder="可选"></label>
+        <div class="grid"><button type="submit" x-text="editingRole ? '保存' : '创建'"></button><button type="button" class="secondary" @click="cancelEdit()">取消</button></div>
+      </form>
+    </article>
+  </dialog>
+
+  <table x-show="!loading">
+    <thead><tr><th>代码</th><th>名称</th><template x-if="isSuper"><th>租户</th></template><th>描述</th><th>操作</th></tr></thead>
+    <tbody>
+      <template x-for="r in items" :key="r.id">
+        <tr><td x-text="r.code"></td><td x-text="r.name"></td><template x-if="isSuper"><td :title="r.tenant_id" x-text="r.tenant_name || r.tenant_id || '—'"></td></template>
+        <td>
+          <button class="secondary outline" @click="startEdit(r)" style="padding:0.1rem 0.5rem;">编辑</button>
+          <button class="secondary outline" @click="del(r.id)" style="padding:0.1rem 0.5rem;margin-left:0.25rem;">删除</button>
+        </td></tr>
+      </template>
+    </tbody>
+  </table>
+  <p x-show="loading">加载中…</p>
+  <p x-show="!loading && items.length===0">暂无角色。</p>
+</div>
+
+<script src="/static/js/roles.js"></script>
+{% endblock %}

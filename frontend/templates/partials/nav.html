@@ -1,0 +1,48 @@
+{# Partial rendered into #nav-links. Shows links based on login state. #}
+{% if logged_in %}
+  {% if user_role == 'nurse' %}
+  <li><a href="/pages/my-schedules">我的排班</a></li>
+  <li><a href="/pages/expectations">排班期望</a></li>
+  {% else %}
+  <li><a href="/pages/dashboard">首页</a></li>
+  <li>
+    <details>
+      <summary>护士</summary>
+      <ul>
+        <li><a href="/pages/nurses">护士管理</a></li>
+        {% if user_role == 'super_admin' or user_role == 'tenant_admin' %}
+        <li><a href="/pages/roles">角色管理</a></li>
+        <li><a href="/pages/skills">技能管理</a></li>
+        {% endif %}
+      </ul>
+    </details>
+  </li>
+  <li><a href="/pages/shifts">班次</a></li>
+  <li><a href="/pages/rules">规则</a></li>
+  <li><a href="/pages/generate">生成排班</a></li>
+  <li><a href="/pages/schedules">排班记录</a></li>
+  {% if user_role == 'super_admin' %}
+  <li id="nav-tenants">
+    <details>
+      <summary>租户</summary>
+      <ul>
+        <li><a href="/pages/tenants">租户管理</a></li>
+        <li><a href="/pages/users">用户管理</a></li>
+        <li><a href="/pages/tenant-applications">租户申请</a></li>
+        <li><a href="/pages/billing">账单管理</a></li>
+        <li id="nav-admin"><a href="/pages/admin">仿真管理</a></li>
+      </ul>
+    </details>
+  </li>
+  {% elif user_role == 'tenant_admin' %}
+  <li id="nav-users"><a href="/pages/users">用户管理</a></li>
+  {% endif %}
+  <li><a href="/pages/about">关于</a></li>
+  {% endif %}
+  <li><a href="/pages/profile">个人资料</a></li>
+  <li><a href="/pages/login" id="nav-logout">退出</a></li>
+{% else %}
+  <li><a href="/pages/login">登录</a></li>
+  <li><a href="/pages/apply">申请使用</a></li>
+  <li><a href="/pages/about">关于</a></li>
+{% endif %}

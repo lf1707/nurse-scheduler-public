@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Page scripts are preloaded below; HTMX must not refetch boosted response scripts. -->
+  <meta name="htmx-config" content='{"allowScriptTags":false}'>
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  {% block head %}{% endblock %}
+  <!-- Pico.css: classless minimal CSS, ~20KB gzipped, no build needed -->
+  <link rel="stylesheet" href="/static/vendor/pico/2/pico.min.css">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ app_version }}">
+  <!-- HTMX: partial page updates via AJAX, ~14KB gzipped -->
+  <script src="/static/js/alpine-safe-evaluator.js"></script>
+  {% if not request.headers.get('HX-Request') %}
+    <script src="/static/js/base.js?v={{ app_version }}" defer></script>
+    <!-- Page components must exist before Alpine initializes boosted DOM swaps. -->
+    <script src="/static/js/admin.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/apply.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/billing.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/generate.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/login.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/my_schedules.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/setup_admin.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/nurses.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/profile.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/roles.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/rules.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/schedule_detail.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/schedules.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/shifts.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/skills.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/tenant_applications.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/tenants.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/users.js?v={{ app_version }}" defer></script>
+    <script src="/static/js/verify_application.js?v={{ app_version }}" defer></script>
+    <script src="/static/vendor/htmx/2.0.4/htmx.min.js" defer></script>
+    <!-- Alpine.js: tiny reactivity for modals/dropdowns, ~8KB gzipped -->
+    <script src="/static/vendor/alpine/3.14.8/cdn.min.js" defer></script>
+  {% endif %}
+</head>
+<body
+  hx-boost="true"
+  data-user-role="{% if user_role %}{{ user_role }}{% endif %}"
+  data-app-version="{{ app_version }}"
+>
+  <div id="impersonate-banner" style="display:none; background:#e9c46a55; padding:0.2rem 1rem; font-size:0.8rem;">
+    仿真中 — 以他人身份登录 · <a href="#" id="exit-impersonate-link">退出仿真</a>
+  </div>
+  <nav class="container-fluid">
+    <ul>
+      <li><strong>{{ app_name }}</strong></li>
+    </ul>
+    <ul id="nav-links"></ul>
+    <ul><li id="nav-user" style="font-size:0.85em;opacity:0.8;"></li></ul>
+  </nav>
+
+  <main class="container-fluid">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container-fluid">
+    <div style="display:flex; align-items:center; gap:1rem;">
+      <small>{{ app_name }} · {{ app_version }}</small>
+      <small style="flex:1; text-align:center;">
+        Power By Google's <a href="https://developers.google.com/optimization/scheduling/employee_scheduling?hl=zh-cn" target="_blank" rel="noopener">OR-Tools</a>
+        ·
+        <a href="https://github.com/galojix/roster-wizard" target="_blank" rel="noopener">Fork from roster-wizard</a>
+      </small>
+      <small>© Rum studio™</small>
+    </div>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

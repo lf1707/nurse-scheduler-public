@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}技能管理 · {{ app_name }}{% endblock %}
+{% block content %}
+<div x-data="skillsPage()" x-init="load()">
+  <h2>技能管理</h2>
+  <div style="display:flex; flex-direction:column; align-items:flex-start; gap:.5rem; margin-bottom:1rem;">
+    <template x-if="isSuper">
+      <label>租户
+        <select x-model="tenantId" @change="reloadForTenant()">
+          <option value="">全部租户（跨租户浏览）</option>
+          <template x-for="tenant in tenants" :key="tenant.id">
+            <option :value="tenant.id" :selected="tenant.id === tenantId" x-text="tenant.name"></option>
+          </template>
+        </select>
+      </label>
+    </template>
+    <div style="display:flex; align-items:end; gap:1rem; flex-wrap:wrap;">
+      <button class="secondary" :disabled="!canCreateTarget" @click="showForm=!showForm" x-text="showForm ? '取消' : '新增技能'"></button>
+      <small x-show="canManage && !canCreateTarget" style="opacity:.7;">创建技能前请选择租户</small>
+    </div>
+  </div>
+
+  <dialog :open="showForm" x-show="showForm" style="display:none;">
+    <article>
+      <h3 x-text="editingSkill ? '编辑技能' : '新增技能'"></h3>
+      <form @submit.prevent="saveSkill()">
+        <input type="hidden" x-model="form.id">
+        <label>代码 <input x-model="form.code" required maxlength="30" placeholder="IV"></label>
+        <label>名称 <input x-model="form.name" required maxlength="100" placeholder="静脉注射"></label>
+        <div class="grid"><button type="submit" x-text="editingSkill ? '保存' : '创建'"></button><button type="button" class="secondary" @click="cancelEdit()">取消</button></div>
+      </form>
+    </article>
+  </dialog>
+
+  <table x-show="!loading">
+    <thead><tr><th>代码</th><th>名称</th><template x-if="isSuper"><th>租户</th></template><th>操作</th></tr></thead>
+    <tbody>
+      <template x-for="s in items" :key="s.id">
+        <tr><td x-text="s.code"></td><td x-text="s.name"></td><template x-if="isSuper"><td :title="s.tenant_id" x-text="s.tenant_name || s.tenant_id || '—'"></td></template>
+        <td>
+          <button class="secondary outline" @click="startEdit(s)" style="padding:0.1rem 0.5rem;">编辑</button>
+          <button class="secondary outline" @click="del(s.id)" style="padding:0.1rem 0.5rem;margin-left:0.25rem;">删除</button>
+        </td></tr>
+      </template>
+    </tbody>
+  </table>
+  <p x-show="loading">加载中…</p>
+  <p x-show="!loading && items.length===0">暂无技能。</p>
+</div>
+
+<script src="/static/js/skills.js"></script>
+{% endblock %}

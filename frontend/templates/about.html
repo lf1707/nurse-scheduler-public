@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}关于 · {{ app_name }}{% endblock %}
+{% block content %}
+<h2>关于 {{ app_name }}</h2>
+
+<section>
+  <h3>项目介绍</h3>
+  <div style="white-space:pre-wrap;">{{ about_text }}</div>
+  <p>
+    本项目源码：
+    <a href="https://github.com/lf1707/nurse-scheduler-public" target="_blank" rel="noopener">github.com/lf1707/nurse-scheduler-public</a>
+    <br>
+    上游项目：
+    <a href="https://github.com/galojix/roster-wizard" target="_blank" rel="noopener">github.com/galojix/roster-wizard</a>
+  </p>
+</section>
+
+<section>
+  <h3>开源协议</h3>
+  <p>
+    本项目以
+    <a href="https://github.com/lf1707/nurse-scheduler-public/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+    发布；上游项目 roster-wizard 同样使用 MIT License。
+  </p>
+</section>
+
+<section>
+  <h3>联系方式</h3>
+  <p>如需技术支持、功能建议或合作洽谈，请通过以下方式联系：</p>
+  <ul>
+    <li>邮箱：{{ contact_email or '未设置' }}</li>
+  </ul>
+</section>
+
+<section>
+  <h3>致谢</h3>
+  <ul>
+    <li>Google OR-Tools — 排班求解引擎</li>
+    <li>roster-wizard — 原始项目</li>
+    <li>Pico.css、Alpine.js、HTMX — 前端技术栈</li>
+  </ul>
+</section>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}登录 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<article style="max-width: 480px; margin: 4rem auto;">
+  <hgroup>
+    <h1>登录</h1>
+    <h2>{{ app_name }}</h2>
+  </hgroup>
+
+  <form id="login-form" method="dialog" hx-boost="false">
+    <label>邮箱
+      <input type="email" id="email" name="email" autocomplete="username" required>
+    </label>
+    <label>密码
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </label>
+    <label id="mfa-field" style="display:none;">MFA 验证码
+      <input type="text" id="totp_code" name="totp_code"
+             pattern="[0-9]{6}" maxlength="6" inputmode="numeric"
+             placeholder="6 位验证码" autocomplete="one-time-code">
+    </label>
+    <label id="recovery-field" style="display:none;">恢复码
+      <input type="text" id="recovery_code" name="recovery_codes"
+             autocomplete="off" placeholder="恢复码">
+    </label>
+    <button type="submit">登录</button>
+    <p id="login-error" role="alert" style="color: crimson; display:none;"></p>
+  </form>
+</article>
+
+<script src="/static/js/login.js"></script>
+{% endblock %}

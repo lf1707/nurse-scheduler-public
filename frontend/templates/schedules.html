@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}排班记录 · {{ app_name }}{% endblock %}
+{% block content %}
+<div x-data="lst()" x-init="init()">
+  <h2>排班记录</h2>
+  <table x-show="!loading">
+    <thead><tr>
+      <th @click="toggleSort('display_id')" style="cursor:pointer;">记录 ID <span x-show="sortBy==='display_id'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <th @click="toggleSort('period_start')" style="cursor:pointer;">起始 <span x-show="sortBy==='period_start'" x-text="sortDir==='asc' ? '↑' : '↓'"></span></th>
+      <th>天数</th><th>生效版本</th><th>状态</th><th>结果</th><template x-if="isSuper"><th>租户</th></template><th>查看</th><template x-if="canDelete"><th>操作</th></template>
+    </tr></thead>
+    <tbody>
+      <template x-for="r in items" :key="r.id">
+        <tr :data-request-id="r.id">
+         <td style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.85em;" :title="r.id" x-text="r.display_id"></td>
+         <td x-text="r.period_start"></td>
+        <td x-text="r.period_days"></td>
+        <td>
+          <span x-show="r.available_versions?.length" style="display:inline-flex;align-items:center;gap:0.25rem;">
+            <span data-testid="schedule-active-version-current" class="tag" x-text="'当前选择 V'+r.pending_active_version"></span>
+            <template x-for="version in r.available_versions" :key="version">
+              <button type="button"
+                      class="secondary outline"
+                      :class="Number(r.pending_active_version)===version ? 'primary' : ''"
+                      @click="r.pending_active_version=version"
+                      :disabled="!canActivate || r.status!=='completed'"
+                      :title="canActivate ? '选择生效版本' : '仅超管 / 租户管理员 / 排班员可切换生效版本'"
+                      x-text="'V'+version"
+                      style="width:auto;margin:0;padding:0.1rem 0.4rem;font-size:0.8em;line-height:1.2;">V</button>
+            </template>
+          </span>
+          <button data-testid="schedule-active-version-save" class="primary outline"
+                  @click="setActive(r)"
+                  :disabled="!canActivate || r.status!=='completed' || r.savingActiveVersion || Number(r.pending_active_version)===Number(r.previous_active_version)"
+                  x-text="r.savingActiveVersion ? '保存中…' : '保存'"
+                  style="width:auto;margin:0 0 0 0.35rem;padding:0.15rem 0.5rem;font-size:0.8em;line-height:1.2;">保存</button>
+          <span x-show="!r.available_versions?.length">—</span>
+        </td>
+       <td>
+         <span class="tag" :class="r.status==='completed'?'tag-ok':(r.status==='failed'?'tag-fail':'tag-run')" x-text="r.status"></span>
+         <div x-show="r.status==='failed' && r.error_message" style="color:crimson; font-size:0.8em; margin-top:0.2rem;" x-text="r.error_message"></div>
+       </td>
+       <td x-text="r.outcome||'—'"></td>
+       <template x-if="isSuper"><td x-text="r.tenant_name || r.tenant_id || '—'"></td></template>
+       <td><a :href="'/pages/schedules/'+r.id" class="secondary outline" style="padding:0.1rem 0.5rem;">查看</a></td>
+       <template x-if="canDelete"><td style="white-space:nowrap;">
+         <button x-show="canCancel(r)" @click="cancel(r)" class="secondary outline"
+                 :disabled="r.cancelling" style="padding:0.1rem 0.5rem;"
+                 x-text="r.cancelling ? '取消中…' : '取消'">取消</button>
+         <button x-show="r.status!=='pending' && r.status!=='running'" @click="del(r.id)" class="secondary outline" style="padding:0.1rem 0.5rem;">删除</button>
+       </td></template>
+      </tr>
+    </template>
+  </tbody>
+ </table>
+  <p x-show="loading">加载中…</p>
+  <p x-show="!loading && items.length===0">暂无排班请求。先去 <a href="/pages/generate">生成排班</a>。</p>
+</div>
+<script src="/static/js/schedules.js"></script>
+{% endblock %}

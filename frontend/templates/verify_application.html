@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}验证申请 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<article style="max-width: 520px; margin: 4rem auto;">
+  <hgroup>
+    <h1>验证租户申请</h1>
+    <h2 id="verify-state">正在验证邮箱…</h2>
+  </hgroup>
+  <p id="verify-error" role="alert" style="color:crimson; display:none;"></p>
+  <a href="/pages/apply" role="button" class="outline">返回申请页</a>
+</article>
+
+<script src="/static/js/verify_application.js"></script>
+{% endblock %}

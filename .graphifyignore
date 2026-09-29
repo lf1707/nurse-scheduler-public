@@ -1,0 +1,3 @@
+# vendored third-party assets: AST noise (minified JS floods the graph with
+# single-letter nodes and dominates God Nodes / community cohesion alarms)
+frontend/static/vendor/

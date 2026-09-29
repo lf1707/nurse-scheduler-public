@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}排班期望 · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div x-data="mySchedules('preferences')" x-init="load()">
+  <h2>排班期望</h2>
+  <p style="font-size:0.9em;opacity:0.75;">
+    同一天可以保存多个“期望”班次，它们会作为互斥候选；排班时按优先级和可行性最多选择其中一个。优先级相同时，按班次开始时间排序并优先选择更早班次；如果该班次因技能配比、人数、休息或合同限制不可行，会改选下一个可行候选；若都不可行，当天可能不安排。“避开”仍按班次独立生效。
+  </p>
+  <p x-show="error" style="color:crimson;" x-text="error"></p>
+  <p x-show="loading">加载中…</p>
+
+  <article x-show="!loading">
+    <h3>新增期望</h3>
+    <form @submit.prevent="savePreference()" style="display:grid; grid-template-columns:1fr 1.5fr 1fr 0.75fr auto; gap:0.75rem; align-items:end;">
+      <label>日期
+        <input type="date" x-model="preferenceForm.date" required>
+      </label>
+      <label>班次
+        <select x-model="preferenceForm.shift_template_id" required>
+          <option value="">选择班次…</option>
+          <template x-for="template in shiftTemplates" :key="template.id">
+            <option :value="template.id" x-text="template.code + ' · ' + template.name"></option>
+          </template>
+        </select>
+      </label>
+      <label>类型
+        <select x-model="preferenceForm.request_type">
+          <option value="like">期望</option>
+          <option value="avoid">避开</option>
+        </select>
+      </label>
+      <label>优先级
+        <input type="number" x-model.number="preferenceForm.priority" min="1" step="1" required>
+      </label>
+      <button type="submit">保存</button>
+    </form>
+    <p x-show="preferenceMessage" x-text="preferenceMessage" style="margin:0.5rem 0 0;"></p>
+  </article>
+
+  <table x-show="!loading && preferences.length">
+    <thead><tr><th>日期</th><th>班次</th><th>类型</th><th>优先级</th><th>操作</th></tr></thead>
+    <tbody>
+      <template x-for="preference in preferences" :key="preference.id">
+        <tr>
+          <td x-text="preference.date"></td>
+          <td x-text="shiftLabel(preference.shift_template_id)"></td>
+          <td x-text="preference.request_type === 'like' ? '期望' : '避开'"></td>
+          <td x-text="preference.priority"></td>
+          <td><button type="button" class="secondary outline" style="padding:0.05rem 0.45rem;" @click="removePreference(preference.id)">删除</button></td>
+        </tr>
+      </template>
+    </tbody>
+  </table>
+  <p x-show="!loading && !preferences.length">暂无排班期望。</p>
+</div>
+
+<script src="/static/js/my_schedules.js"></script>
+{% endblock %}
